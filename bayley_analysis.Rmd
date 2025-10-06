@@ -1,0 +1,1167 @@
+---
+title: "bayley_analysis"
+author: "Cynthia Perez"
+date: "2025-08-28"
+output: html_document
+---
+
+```{r load files}
+library(tidyverse)
+library(openxlsx)
+library(ggplot2)
+library(readxl)
+library(ggpubr)
+library(Hmisc)
+library(reshape2)
+library(corrplot)
+library(rstatix)
+library(reshape2)
+
+
+load("cleaned_ACNC.RData")
+load("Glowing_PFAS_BSID_finaldata_101016_jenvadv2025100650.RData")
+bf_variable = read.xlsx("bsid_modeling_2025-02-06.xlsx") 
+
+```
+
+
+```{r data cleaning}
+
+bf_variable = bf_variable %>% filter(visit_name == "Post-12mo") %>% select(id, bf_length_mo) %>% dplyr::rename("Sample_Name" = "id")
+
+placenta_pfas = bayley_PFAS_covars %>% select(contains(c("ln","participant"))) %>% dplyr::rename("Sample_Name" = "participant_id")
+
+colnames(placenta_pfas)[1:6] = gsub("ln","",colnames(placenta_pfas)[1:6])
+
+bayley_PFAS_covars = bayley_PFAS_covars %>% select(participant_id,cogn_comp_12, cogn_comp_24, lang_comp_12, lang_comp_24, motor_comp_12, motor_comp_24, soc_emo_12, soc_emo_24, adapt_gac_12, adapt_gac_24, child_sex, childs_race, marital_status, mom_education, delivery_method, mom_race, mom_govt_asst, mom_age_at_birth, official_enroll_category, gest_age_in_weeks_edd) %>% dplyr::rename("Sample_Name" = "participant_id") %>% left_join(bf_variable, by = "Sample_Name")
+
+
+#there are 43 ACNC_24mo IDs without bayley scores 
+#str_extract(ACNC_24mo$Sample_Name, "^[^ ]+")[which(str_extract(ACNC_24mo$Sample_Name, "^[^ ]+") %in% bayley_PFAS_covars$Sample_Name == FALSE)]
+
+#I was having issues in my linear model for loops when pfas names included - 
+colnames(ACNC_24mo) = gsub("-", "_", colnames(ACNC_24mo))
+colnames(ACNC_24mo)[32:34] = c("FTS_42", "FTS_62", "FTS_82")
+colnames(ACNC_6mo) = gsub("-", "_", colnames(ACNC_6mo))
+colnames(ACNC_6mo)[32:34] = c("FTS_42", "FTS_62", "FTS_82")
+
+#log transform
+ACNC_24mo = ACNC_24mo %>%
+            mutate(across(-1, ~ log(.)))
+ACNC_6mo = ACNC_6mo %>%
+            mutate(across(-1, ~ log(.)))
+
+ACNC_24mo_bayley = ACNC_24mo %>% filter(str_extract(Sample_Name, "^[^ ]+") %in% bayley_PFAS_covars$Sample_Name) %>% mutate(Sample_Name = str_extract(Sample_Name, "^[^ ]+")) %>% left_join(bayley_PFAS_covars, by = "Sample_Name")
+
+ACNC_6mo_bayley = ACNC_6mo %>% filter(Sample_Name %in% bayley_PFAS_covars$Sample_Name) %>% left_join(bayley_PFAS_covars, by = "Sample_Name")
+
+#str_extract(ACNC_24mo_bayley$Sample_Name, "^[^ ]+") %in% ACNC_6mo_bayley$Sample_Name 
+#TRUE
+PFAS_names = colnames(ACNC_24mo)[-1] 
+
+rm(list = ls()[!ls() %in% c("bayley_list", "ACNC_24mo_bayley", "ACNC_6mo_bayley", "PFAS_names", "placenta_pfas")])
+
+placenta_pfas = placenta_pfas %>% filter(Sample_Name %in% ACNC_6mo_bayley$Sample_Name)
+```
+
+
+```{r}
+colnames(ACNC_24mo_bayley)[2:36] = sapply(colnames(ACNC_24mo_bayley)[2:36], function(name) paste0("mo24_", name))
+
+colnames(ACNC_6mo_bayley)[2:36] = sapply(colnames(ACNC_6mo_bayley)[2:36], function(name) paste0("mo6_", name))
+
+PFAS_24mo_6mo_bayley = ACNC_24mo_bayley %>% select(contains("Sample") | contains(PFAS_names) ) %>% left_join(ACNC_6mo_bayley, by = "Sample_Name")
+
+
+
+placenta_pfas = placenta_pfas %>% select(Sample_Name, sPFOS, PFNA, PFHxS, PFDA, LPFOA)
+colnames(placenta_pfas)[2:6] = sapply(colnames(placenta_pfas)[2:6], function(name) paste0("placenta_", name))
+
+
+
+PFAS_24mo_6mo_placenta = PFAS_24mo_6mo_bayley  %>% left_join(placenta_pfas, by = "Sample_Name")
+
+
+ACNC_60mo = read.xlsx("PFAS_Cleaned_Continuous.xlsx") 
+
+ACNC_60mo = ACNC_60mo %>% filter(Visit == "60mo") %>% select(StudyID.GE, contains("PF")) %>% filter(str_detect(StudyID.GE, "G-") ) %>% dplyr::rename("Sample_Name" = "StudyID.GE") %>% mutate(across(-1, ~ log(.)))
+
+colnames(ACNC_60mo) = gsub("\\.", "_", colnames(ACNC_60mo))
+
+colnames(ACNC_60mo)[2:8] = sapply(colnames(ACNC_60mo)[2:8], function(name) paste0("mo60_", name))
+
+#I was only able to match 38 IDs 
+
+PFAS_24mo_6mo_60mo_placenta = PFAS_24mo_6mo_placenta %>% left_join(ACNC_60mo,by = "Sample_Name")
+```
+
+
+#24mo BSID outcome (contninuous) ~ 24mo + covariates
+```{r linear model 24mo}
+
+
+results_24mo = list()
+pfas_w_var = ACNC_24mo_bayley %>% select(PFAS_names) %>% 
+ select(where(~ is.numeric(.) && sd(., na.rm = TRUE) != 0)) %>% colnames()
+pfas_w_var2 = pfas_w_var
+out = list()
+
+for( outcome in bayley_list[grepl("_24", bayley_list)] ){
+  for (pfas in pfas_w_var){
+    form <- reformulate(c(pfas,
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex", 
+"bf_length_mo"
+), response = outcome)
+    model <- lm(form, data = ACNC_24mo_bayley)
+    
+    if(is.na(model[["coefficients"]][2]) == TRUE ){
+       out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  pfas,
+    estimate  = NA,
+    conf.low  = NA ,
+    conf.high = NA ,
+    p.value   = NA,
+    row.names = NULL
+)
+    } else {
+        coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  pfas,
+    estimate  = coef_mat[pfas, "Estimate"],
+    conf.low  = ci[1],
+    conf.high = ci[2],
+    p.value   = coef_mat[pfas, "Pr(>|t|)"],
+    row.names = NULL
+)
+    }
+    
+  
+  }
+results_24mo[[outcome]] <- bind_rows(out)
+}
+```
+
+```{r forest plot 24mo}
+full_name = c("Cognitive Score @ 24mo", "Language Score @ 24mo", "Motor Score @ 24mo", "Socio Emotional Score @ 24mo", "Adaptive Score @ 24mo")
+
+pdf(file = "forest_plots_24mo_bf.pdf") 
+    
+for(i in 1:length(results_24mo)){
+   p = ggplot(results_24mo[[i]], aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high)) +
+          geom_point() +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+          labs(title = paste0(full_name[i]), x = "Coefficient Estimate", y = "PFAS")
+   print(p)
+}
+ dev.off()
+```
+
+
+```{r excel 24mo}
+wb <- createWorkbook()
+
+
+for(b in 1:length(results_24mo)){
+  bayley = names(results_24mo)[b]
+  addWorksheet(wb, as.character(bayley))
+writeData(wb, as.character(bayley), results_24mo[[b]])
+}
+
+saveWorkbook(wb, "bayley_24mo_PFAS_bf.xlsx", overwrite = TRUE)
+```
+
+#24mo BSID outcome (contninuous) ~ 6mo + covariates 
+```{r linear model 6mo}
+results_6mo = list()
+pfas_w_var = ACNC_6mo_bayley %>% select(PFAS_names) %>% 
+ select(where(~ is.numeric(.) && sd(., na.rm = TRUE) != 0)) %>% colnames()
+out = list()
+
+for( outcome in bayley_list ){
+  for (pfas in pfas_w_var){
+    
+    form <- reformulate(c(pfas,
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex",
+"bf_length_mo"
+), response = outcome)
+    model <- lm(form, data = ACNC_6mo_bayley)
+    
+    if(is.na(model[["coefficients"]][2]) == TRUE ){
+       out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  pfas,
+    estimate  = NA,
+    conf.low  = NA ,
+    conf.high = NA ,
+    p.value   = NA,
+    row.names = NULL
+)
+    } else {
+        coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  pfas,
+    estimate  = coef_mat[pfas, "Estimate"],
+    conf.low  = ci[1],
+    conf.high = ci[2],
+    p.value   = coef_mat[pfas, "Pr(>|t|)"],
+    row.names = NULL
+)
+    }
+    
+  
+  }
+results_6mo[[outcome]] <- bind_rows(out)
+}
+```
+
+
+```{r forest plot 6mo}
+full_name = c("Cognitive Score @ 12mo","Cognitive Score @ 24mo", "Language Score @ 12mo", "Language Score @ 24mo",  "Motor Score @ 12mo","Motor Score @ 24mo", "Socio Emotional Score @ 12mo", "Socio Emotional Score @ 24mo", "Adaptive Score @ 12mo", "Adaptive Score @ 24mo")
+
+pdf(file = "forest_plots_6mo_bf.pdf") 
+    
+for(i in 1:length(results_6mo)){
+   p = ggplot(results_6mo[[i]], aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high)) +
+          geom_point() +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+          labs(title = paste0(full_name[i]), x = "Coefficient Estimate", y = "PFAS")
+   print(p)
+}
+ dev.off()
+```
+
+```{r excel 6mo}
+wb <- createWorkbook()
+
+
+for(b in 1:length(results_6mo)){
+  bayley = names(results_6mo)[b]
+  addWorksheet(wb, as.character(bayley))
+writeData(wb, as.character(bayley), results_6mo[[b]])
+}
+
+saveWorkbook(wb, "bayley_6mo_PFAS_bf.xlsx", overwrite = TRUE)
+```
+#24mo BSID outcome (contninuous) ~ 6mo + 24mo + covariates
+```{r creating table with 6mo and 24 mo pfas data}
+
+colnames(ACNC_24mo_bayley)[2:36] = sapply(colnames(ACNC_24mo_bayley)[2:36], function(name) paste0("mo24_", name))
+
+colnames(ACNC_6mo_bayley)[2:36] = sapply(colnames(ACNC_6mo_bayley)[2:36], function(name) paste0("mo6_", name))
+
+PFAS_24mo_6mo_bayley = ACNC_24mo_bayley %>% select(contains("Sample") | contains(PFAS_names) ) %>% left_join(ACNC_6mo_bayley, by = "Sample_Name")
+
+
+```
+
+```{r linear model 6mo 24mo}
+most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br", "PFOS_Total" ,"PFOA","PFNA")
+
+results_6mo_24mo = list()
+out = list()
+
+for( outcome in bayley_list[grepl("_24", bayley_list)] ){
+  for (i in 1:length(most_detected_pfas)){
+    pfas = paste0("mo6_",most_detected_pfas[i])
+    pfas2 = paste0("mo24_",most_detected_pfas[i])
+    form <- reformulate(c(pfas, pfas2,
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex",
+"bf_length_mo"
+), response = outcome)
+    model <- lm(form, data = PFAS_24mo_6mo_bayley )
+    
+    if(is.na(model[["coefficients"]][2])| is.na(model[["coefficients"]][3]) == TRUE ){
+       out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  c(pfas, pfas2),
+    estimate  = c(NA, NA),
+    conf.low  = c(NA, NA),
+    conf.high = c(NA, NA),
+    p.value   = c(NA,NA), 
+    row.names = NULL
+)
+    } else {
+        coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    ci2 <- confint(model)[pfas2, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = c(outcome,outcome), 
+    pfas     =  c(pfas, pfas2),
+    estimate  = c(coef_mat[pfas, "Estimate"], coef_mat[pfas2, "Estimate"]), 
+    conf.low  = c(ci[1], ci2[1]),
+    conf.high = c(ci[2],ci2[2]),
+    p.value   = c(coef_mat[pfas, "Pr(>|t|)"],coef_mat[pfas2, "Pr(>|t|)"]),
+    model = i,
+    row.names = NULL)
+    }
+    
+  
+  }
+results_6mo_24mo[[outcome]] <- bind_rows(out)
+}
+
+```
+
+```{r excel 6mo 24mo}
+wb <- createWorkbook()
+
+for(b in 1:length(results_6mo_24mo)){
+bayley = names(results_6mo_24mo)[b]
+addWorksheet(wb, as.character(bayley))
+writeData(wb, as.character(bayley), results_6mo_24mo[[b]])
+}
+
+saveWorkbook(wb, "bayley_6mo_24mo_PFAS_bf.xlsx", overwrite = TRUE)
+```
+
+```{r forest plots 6mo 24mo}
+full_name = c("Cognitive Score @ 24 mo", "Language Score @ 24 mo", "Motor Score @ 24 mo", "Socio Emotional Score @ 24 mo", "Adaptive Score @ 24 mo")
+
+pdf(file = "forest_plots_6mo_24mo_bf.pdf") 
+    
+for(x in 1:length(results_6mo_24mo)){
+  split_data = results_6mo_24mo[[x]] %>% group_by(model) %>% group_split()
+  p = list()
+  for (i in 1:length(split_data) ){
+  data = split_data[[i]]
+   p[[i]]= ggplot(data, aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high)) +
+          geom_point() +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red")+
+          labs(title = paste0(full_name[x]), x = "Coefficient Estimate", y = "PFAS")+
+          theme_minimal(base_size = 8) +
+          theme(axis.title.x = element_text(size = 6),axis.title.y = element_text(size = 6), plot.title = element_text(size = 6))
+  
+  } 
+   arranged_plots = ggarrange(plotlist = p, ncol = 3, nrow = 3, widths = c(3, 3, 3),heights = c(1, 1, 1)) 
+   print(arranged_plots)
+  }
+ dev.off()
+```
+
+
+
+```{r linear model 6mo 24mo no bf}
+most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br", "PFOS_Total" ,"PFOA","PFNA")
+
+results_6mo_24mo = list()
+out = list()
+
+for( outcome in bayley_list[grepl("_24", bayley_list)] ){
+  for (i in 1:length(most_detected_pfas)){
+    pfas = paste0("mo6_",most_detected_pfas[i])
+    pfas2 = paste0("mo24_",most_detected_pfas[i])
+    form <- reformulate(c(pfas, pfas2,
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex"
+), response = outcome)
+    model <- lm(form, data = PFAS_24mo_6mo_bayley )
+    
+    if(is.na(model[["coefficients"]][2])| is.na(model[["coefficients"]][3]) == TRUE ){
+       out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  c(pfas, pfas2),
+    estimate  = c(NA, NA),
+    conf.low  = c(NA, NA),
+    conf.high = c(NA, NA),
+    p.value   = c(NA,NA), 
+    row.names = NULL
+)
+    } else {
+        coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    ci2 <- confint(model)[pfas2, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = c(outcome,outcome), 
+    pfas     =  c(pfas, pfas2),
+    estimate  = c(coef_mat[pfas, "Estimate"], coef_mat[pfas2, "Estimate"]), 
+    conf.low  = c(ci[1], ci2[1]),
+    conf.high = c(ci[2],ci2[2]),
+    p.value   = c(coef_mat[pfas, "Pr(>|t|)"],coef_mat[pfas2, "Pr(>|t|)"]),
+    model = i,
+    row.names = NULL)
+    }
+    
+  
+  }
+results_6mo_24mo[[outcome]] <- bind_rows(out)
+}
+
+```
+
+```{r excel 6mo 24mo no bf}
+wb <- createWorkbook()
+
+for(b in 1:length(results_6mo_24mo)){
+bayley = names(results_6mo_24mo)[b]
+addWorksheet(wb, as.character(bayley))
+writeData(wb, as.character(bayley), results_6mo_24mo[[b]])
+}
+
+saveWorkbook(wb, "bayley_6mo_24mo_PFAS_bf.xlsx", overwrite = TRUE)
+```
+
+```{r forest plots 6mo 24mo no bf}
+full_name = c("Cognitive Score @ 24 mo", "Language Score @ 24 mo", "Motor Score @ 24 mo", "Socio Emotional Score @ 24 mo", "Adaptive Score @ 24 mo")
+
+pdf(file = "forest_plots_6mo_24mo.pdf") 
+    
+for(x in 1:length(results_6mo_24mo)){
+  split_data = results_6mo_24mo[[x]] %>% group_by(model) %>% group_split()
+  p = list()
+  for (i in 1:length(split_data) ){
+  data = split_data[[i]]
+   p[[i]]= ggplot(data, aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high)) +
+          geom_point() +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red")+
+          labs(title = paste0(full_name[x]), x = "Coefficient Estimate", y = "PFAS")+
+          theme_minimal(base_size = 8) +
+          theme(axis.title.x = element_text(size = 6),axis.title.y = element_text(size = 6), plot.title = element_text(size = 6))
+  
+  } 
+   arranged_plots = ggarrange(plotlist = p, ncol = 3, nrow = 3, widths = c(3, 3, 3),heights = c(1, 1, 1)) 
+   print(arranged_plots)
+  }
+ dev.off()
+```
+
+# BSID Score (cog) ~ placenta PFOS + 6mo PFOS + 24mo PFOS + covars + BF duration
+```{r creating table with 6mo 12mo placenta pfas}
+
+placenta_pfas = placenta_pfas %>% select(Sample_Name, sPFOS, PFNA, PFHxS, PFDA, LPFOA)
+colnames(placenta_pfas)[2:6] = sapply(colnames(placenta_pfas)[2:6], function(name) paste0("placenta_", name))
+
+
+
+PFAS_24mo_6mo_bayley = PFAS_24mo_6mo_bayley  %>% left_join(placenta_pfas, by = "Sample_Name")
+```
+
+
+```{r model for grant with bf}
+subset = PFAS_24mo_6mo_bayley %>% select(mo24_PFOS_Total, mo6_PFOS_Total, mo24_PFOA, mo6_PFOA, mo24_PFHxS_Total, mo6_PFHxS_Total, mo24_PFNA, mo6_PFNA, soc_emo_24, mom_age_at_birth, mom_education, official_enroll_category, gest_age_in_weeks_edd, child_sex, bf_length_mo, placenta_sPFOS, placenta_LPFOA, placenta_PFHxS, placenta_PFNA)
+
+out = list() 
+
+pfas_months = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
+pfas_placenta = c("placenta_sPFOS", "placenta_LPFOA", "placenta_PFHxS", "placenta_PFNA")
+  for (i in 1:4){
+    pfas  = paste0("mo24_",pfas_months[i])
+    pfas2 = paste0("mo6_",pfas_months[i])
+    pfas3 = pfas_placenta[i]
+    form <- reformulate(c(pfas,pfas2, pfas3, 
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex", 
+"bf_length_mo"
+), response = "soc_emo_24")
+    model <- lm(form, data = subset)
+   
+    coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = "soc_emo_24",
+    pfas     =  pfas,
+    estimate  = coef_mat[pfas, "Estimate"],
+    conf.low  = ci[1],
+    conf.high = ci[2],
+    p.value   = coef_mat[pfas, "Pr(>|t|)"],
+    row.names = NULL
+)
+    }
+    
+  
+bfresults_24mo_4PFAS <- bind_rows(out)
+
+bfresults_24mo_4PFAS$pfas = c("PFOS", "PFOA", "PFHxS", "PFNA")
+bfresults_24mo_4PFAS
+```
+
+```{r model for grant no bf}
+subset = PFAS_24mo_6mo_bayley %>% select(mo24_PFOS_Total, mo6_PFOS_Total, mo24_PFOA, mo6_PFOA, mo24_PFHxS_Total, mo6_PFHxS_Total, mo24_PFNA, mo6_PFNA, soc_emo_24, mom_age_at_birth, mom_education, official_enroll_category, gest_age_in_weeks_edd, child_sex, bf_length_mo, placenta_sPFOS, placenta_LPFOA, placenta_PFHxS, placenta_PFNA)
+
+out = list() 
+
+pfas_months = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
+pfas_placenta = c("placenta_sPFOS", "placenta_LPFOA", "placenta_PFHxS", "placenta_PFNA")
+  for (i in 1:4){
+    pfas  = paste0("mo24_",pfas_months[i])
+    pfas2 = paste0("mo6_",pfas_months[i])
+    pfas3 = pfas_placenta[i]
+    form <- reformulate(c(pfas,pfas2, pfas3, 
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex"
+), response = "soc_emo_24")
+    model <- lm(form, data = subset)
+   
+    coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = "soc_emo_24",
+    pfas     =  pfas,
+    estimate  = coef_mat[pfas, "Estimate"],
+    conf.low  = ci[1],
+    conf.high = ci[2],
+    p.value   = coef_mat[pfas, "Pr(>|t|)"],
+    row.names = NULL
+)
+    }
+    
+  
+results_24mo_4PFAS <- bind_rows(out)
+results_24mo_4PFAS$pfas = c("PFOS", "PFOA", "PFHxS", "PFNA")
+results_24mo_4PFAS
+```
+
+```{r}
+ggplot(results_24mo_4PFAS, aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high, color = pfas)) +
+          geom_point(size = 0.5) +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+          labs(title = "The effects of 24-month PFAS on \n 24-month Socioemotional Bayley Score \n (breast feeding excluded in model)", x = "Coefficient Estimate", y = "PFAS") + theme_light() + 
+theme(plot.title = element_text(hjust = 0.5, size = 4, face = "bold"), legend.position = "none", text = element_text(size = 5.5))
+
+```
+
+```{r}
+ggplot(bfresults_24mo_4PFAS, aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high, color = pfas)) +
+          geom_point(size = 0.5) +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+          labs(title = "The effects of 24-month PFAS on \n 24-month Socioemotional Bayley Score \n (breast feeding included in model)", x = "Coefficient Estimate", y = "PFAS") + theme_light() + 
+theme(plot.title = element_text(hjust = 0.5, size = 4, face = "bold"), legend.position = "none", text = element_text(size = 5.5))
+
+```
+
+```{r linear model 6mo 12mo placenta}
+most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br" , "PFOS_Total" ,"PFOA","PFNA")
+
+placenta_pfas_names = c("placenta_PFHxS", "placenta_PFHxS", "placenta_sPFOS", "placenta_sPFOS",  "placenta_sPFOS", "placenta_LPFOA",  "placenta_PFNA")
+                        
+results_6mo_24mo_placenta = list()
+out = list()
+
+for( outcome in bayley_list[grepl("_24", bayley_list)] ){
+  for (i  in 1:length(most_detected_pfas)){
+    pfas = paste0("mo6_",most_detected_pfas[i])
+    pfas2 = paste0("mo24_",most_detected_pfas[i])
+    pfas3 = placenta_pfas_names[i]
+    
+    form <- reformulate(c(pfas, pfas2, pfas3,
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex",
+"bf_length_mo"
+), response = outcome)
+    model <- lm(form, data = PFAS_24mo_6mo_bayley )
+    
+    if(is.na(model[["coefficients"]][2])| is.na(model[["coefficients"]][3]) == TRUE ){
+       out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  c(pfas, pfas2),
+    estimate  = c(NA, NA),
+    conf.low  = c(NA, NA),
+    conf.high = c(NA, NA),
+    p.value   = c(NA,NA), 
+    row.names = NULL
+)
+    } else {
+        coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    ci2 <- confint(model)[pfas2, ]
+    ci3 <- confint(model)[pfas3, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = c(outcome,outcome, outcome), 
+    pfas     =  c(pfas, pfas2, pfas3),
+    estimate  = c(coef_mat[pfas, "Estimate"], coef_mat[pfas2, "Estimate"], coef_mat[pfas3, "Estimate"]), 
+    conf.low  = c(ci[1], ci2[1], ci3[1]),
+    conf.high = c(ci[2],ci2[2], ci3[2]),
+    p.value   = c(coef_mat[pfas, "Pr(>|t|)"],coef_mat[pfas2, "Pr(>|t|)"], coef_mat[pfas3, "Pr(>|t|)"]),
+    model = i,
+    row.names = NULL)
+    }
+  
+  }
+results_6mo_24mo_placenta[[outcome]] <- bind_rows(out)
+}
+```
+
+```{r excel 6mo 12mo placenta}
+wb <- createWorkbook()
+
+for(b in 1:length(results_6mo_24mo_placenta)){
+bayley = names(results_6mo_24mo_placenta)[b]
+addWorksheet(wb, as.character(bayley))
+writeData(wb, as.character(bayley), results_6mo_24mo_placenta[[b]])
+}
+
+saveWorkbook(wb, "bayley_6mo_24mo_placenta_PFAS_bf.xlsx", overwrite = TRUE)
+```
+
+```{r forest plots 6mo 12mo placenta}
+full_name = c("Cognitive Score @ 24 mo", "Language Score @ 24 mo", "Motor Score @ 24 mo", "Socio Emotional Score @ 24 mo", "Adaptive Score @ 24 mo")
+
+pdf(file = "forest_plots_6mo_24mo_placenta_bf.pdf") 
+
+for(x in 1:length(results_6mo_24mo_placenta)){
+  split_data = results_6mo_24mo_placenta[[x]] %>% group_by(model) %>% group_split()
+  p = list()
+  for (i in 1:length(split_data) ){
+  data = split_data[[i]]
+   p[[i]]= ggplot(data, aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high)) +
+          geom_point() +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red")+
+          labs(title = paste0(full_name[x]), x = "Coefficient Estimate", y = "PFAS")+
+          theme_minimal(base_size = 8) +
+          theme(axis.title.x = element_text(size = 6),axis.title.y = element_text(size = 6), plot.title = element_text(size = 6))
+  
+  } 
+   arranged_plots = ggarrange(plotlist = p, ncol = 3, nrow = 3, widths = c(3, 3, 3),heights = c(1, 1, 1)) 
+   print(arranged_plots)
+  }
+ dev.off()
+```
+
+```{r linear model 6mo 12mo placenta no bf}
+most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br" , "PFOS_Total" ,"PFOA","PFNA")
+
+placenta_pfas_names = c("placenta_PFHxS", "placenta_PFHxS", "placenta_sPFOS", "placenta_sPFOS",  "placenta_sPFOS", "placenta_LPFOA",  "placenta_PFNA")
+                        
+results_6mo_24mo_placenta = list()
+out = list()
+
+for( outcome in bayley_list[grepl("_24", bayley_list)] ){
+  for (i  in 1:length(most_detected_pfas)){
+    pfas = paste0("mo6_",most_detected_pfas[i])
+    pfas2 = paste0("mo24_",most_detected_pfas[i])
+    pfas3 = placenta_pfas_names[i]
+    
+    form <- reformulate(c(pfas, pfas2, pfas3,
+"mom_age_at_birth",
+"mom_education",
+"official_enroll_category",
+"gest_age_in_weeks_edd",
+"child_sex"
+), response = outcome)
+    model <- lm(form, data = PFAS_24mo_6mo_bayley )
+    
+    if(is.na(model[["coefficients"]][2])| is.na(model[["coefficients"]][3]) == TRUE ){
+       out[[pfas]] <- data.frame(
+    bayley_score = outcome,
+    pfas     =  c(pfas, pfas2),
+    estimate  = c(NA, NA),
+    conf.low  = c(NA, NA),
+    conf.high = c(NA, NA),
+    p.value   = c(NA,NA), 
+    row.names = NULL
+)
+    } else {
+        coef_mat <- coef(summary(model))
+    ci <- confint(model)[pfas, ]
+    ci2 <- confint(model)[pfas2, ]
+    ci3 <- confint(model)[pfas3, ]
+    
+    out[[pfas]] <- data.frame(
+    bayley_score = c(outcome,outcome, outcome), 
+    pfas     =  c(pfas, pfas2, pfas3),
+    estimate  = c(coef_mat[pfas, "Estimate"], coef_mat[pfas2, "Estimate"], coef_mat[pfas3, "Estimate"]), 
+    conf.low  = c(ci[1], ci2[1], ci3[1]),
+    conf.high = c(ci[2],ci2[2], ci3[2]),
+    p.value   = c(coef_mat[pfas, "Pr(>|t|)"],coef_mat[pfas2, "Pr(>|t|)"], coef_mat[pfas3, "Pr(>|t|)"]),
+    model = i,
+    row.names = NULL)
+    }
+  
+  }
+results_6mo_24mo_placenta[[outcome]] <- bind_rows(out)
+}
+```
+
+```{r excel 6mo 12mo placenta no bf}
+wb <- createWorkbook()
+
+for(b in 1:length(results_6mo_24mo_placenta)){
+bayley = names(results_6mo_24mo_placenta)[b]
+addWorksheet(wb, as.character(bayley))
+writeData(wb, as.character(bayley), results_6mo_24mo_placenta[[b]])
+}
+
+saveWorkbook(wb, "bayley_6mo_24mo_placenta_PFAS.xlsx", overwrite = TRUE)
+```
+
+```{r forest plots 6mo 12mo placenta no bf}
+full_name = c("Cognitive Score @ 24 mo", "Language Score @ 24 mo", "Motor Score @ 24 mo", "Socio Emotional Score @ 24 mo", "Adaptive Score @ 24 mo")
+
+pdf(file = "forest_plots_6mo_24mo_placenta.pdf") 
+
+for(x in 1:length(results_6mo_24mo_placenta)){
+  split_data = results_6mo_24mo_placenta[[x]] %>% group_by(model) %>% group_split()
+  p = list()
+  for (i in 1:length(split_data) ){
+  data = split_data[[i]]
+   p[[i]]= ggplot(data, aes(x = estimate, y = pfas, xmin = conf.low, xmax = conf.high)) +
+          geom_point() +
+          geom_errorbarh(height = 0.2) +
+          geom_vline(xintercept = 0, linetype = "dashed", color = "red")+
+          labs(title = paste0(full_name[x]), x = "Coefficient Estimate", y = "PFAS")+
+          theme_minimal(base_size = 8) +
+          theme(axis.title.x = element_text(size = 6),axis.title.y = element_text(size = 6), plot.title = element_text(size = 6))
+  
+  } 
+   arranged_plots = ggarrange(plotlist = p, ncol = 3, nrow = 3, widths = c(3, 3, 3),heights = c(1, 1, 1)) 
+   print(arranged_plots)
+  }
+ dev.off()
+```
+
+#Pairwise correlations between gestational PFAS and postnatal: correlation coef + p-values, heatmap of coefs
+6mo PFOS ~ placental PFOS
+24mo PFOS ~ placental PFOS
+60mo PFOS ~ placental PFOS
+
+
+```{r reading maternal pfas data}
+load("Victer_clean_blood_PFAS_NS_09192024.Rda")
+match = unique(sub("_.*", "", most_detected_pfas))
+
+mat_blood_pfas = ln_pfas_wide %>% select(id,starts_with("T")) %>% select(id,contains(match), -contains("lnPFOSA")) %>% dplyr::rename("Sample_Name" = "id") 
+
+PFAS_24mo_6mo_bayley = PFAS_24mo_6mo_bayley %>% left_join(mat_blood_pfas, by = "Sample_Name")
+
+```
+
+
+
+```{r reading 60mo data and joining}
+ACNC_60mo = read.xlsx("PFAS_Cleaned_Continuous.xlsx") 
+
+ACNC_60mo = ACNC_60mo %>% filter(Visit == "60mo") %>% select(StudyID.GE, contains("PF")) %>% filter(str_detect(StudyID.GE, "G-") ) %>% dplyr::rename("Sample_Name" = "StudyID.GE") %>% mutate(across(-1, ~ log(.)))
+
+colnames(ACNC_60mo) = gsub("\\.", "_", colnames(ACNC_60mo))
+
+colnames(ACNC_60mo)[2:8] = sapply(colnames(ACNC_60mo)[2:8], function(name) paste0("mo60_", name))
+
+#I was only able to match 38 IDs 
+
+PFAS_24mo_6mo_bayley = PFAS_24mo_6mo_bayley %>% left_join(ACNC_60mo,by = "Sample_Name")
+```
+
+
+
+```{r}
+
+match = sub("_.*", "", most_detected_pfas)
+
+pdf(file = "pairwise_correlations_matblood.pdf") 
+
+for ( t in c("T1", "T2", "T3")){
+  for ( p in 1:7) {
+    plots = list() 
+    
+  for (mo in c("mo6", "mo24", "mo60")){
+    
+    pfas = c(paste0(t,"_ln",match[p]),paste0(mo,"_",most_detected_pfas[p]) )
+    subset = PFAS_24mo_6mo_bayley %>% select(pfas)
+      
+      dependent = colnames(subset)[2]
+      indendent = colnames(subset)[1]
+  
+   plots[[mo]] = ggplot(subset, aes_string(x = indendent, y = dependent)) +
+      geom_point() + # Add scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "blue") + # Add linear regression line without standard error
+      stat_cor(method = "spearman", label.x.npc = "left", label.y.npc = "top")
+ 
+  }
+    arranged_plots = ggarrange(plotlist = plots, ncol = 3) 
+   print(arranged_plots) 
+  }
+
+}
+ 
+dev.off()
+```
+
+```{r}
+
+pdf(file = "pairwise_correlations_placenta.pdf") 
+
+
+  for ( p in 1:7) {
+    plots = list() 
+    
+  for (mo in c("mo6", "mo24", "mo60")){
+    
+    pfas = c(placenta_pfas_names[p], paste0(mo,"_",most_detected_pfas[p]) )
+    subset = PFAS_24mo_6mo_bayley %>% select(pfas)
+      
+      dependent = colnames(subset)[2]
+      indendent = colnames(subset)[1]
+  
+   plots[[mo]] = ggplot(subset, aes_string(x = indendent, y = dependent)) +
+      geom_point() + # Add scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "blue") + # Add linear regression line without standard error
+      stat_cor(method = "spearman", label.x.npc = "left", label.y.npc = "top")
+ 
+  }
+    arranged_plots = ggarrange(plotlist = plots, ncol = 3) 
+   print(arranged_plots) 
+  }
+
+
+ 
+dev.off()
+```
+
+
+```{r 60mo PFAS ~ placental PFAS}
+samples = ACNC_60mo$Sample_Name[which(ACNC_60mo$Sample_Name %in% ACNC_24mo_bayley$Sample_Name)]
+
+subset = PFAS_24mo_6mo_bayley %>% 
+         filter(Sample_Name %in% samples) %>% 
+         select( contains("mo60"), contains("placenta") ) 
+
+most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br" , "PFOS_Total" ,"PFOA","PFNA")
+
+placenta_pfas_names = c("placenta_PFHxS", "placenta_PFHxS", "placenta_sPFOS", "placenta_sPFOS",  "placenta_sPFOS", "placenta_LPFOA",  "placenta_PFNA")
+
+
+pdf(file = "pairwise_correlations_60mo_placenta.pdf") 
+
+for( i in 1:7){
+ p =  ggplot(subset, aes_string(x = placenta_pfas_names[i], y = paste0("mo60_", most_detected_pfas[i]))) +
+      geom_point() + # Add scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "blue") + # Add linear regression line without standard error
+      stat_cor(method = "spearman", label.x.npc = "left", label.y.npc = "top")  +
+      labs(x = "Placenta", y = "60 months", title = paste("Correlation between",  placenta_pfas_names[i], "and 60 month", most_detected_pfas[i]))
+ 
+ print(p) 
+}
+dev.off()
+
+```
+
+
+```{r 6mo PFAS ~ placental PFAS}
+subset = PFAS_24mo_6mo_bayley %>% select( contains("mo6"), contains("placenta"), -contains("mo60") ) 
+
+
+
+pdf(file = "pairwise_correlations_6mo_placenta.pdf") 
+
+for( i in 1:7){
+ p =  ggplot(subset, aes_string(x = placenta_pfas_names[i], y = paste0("mo6_", most_detected_pfas[i]))) +
+      geom_point() + # Add scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "blue") + # Add linear regression line without standard error
+      stat_cor(method = "spearman", label.x.npc = "left", label.y.npc = "top")  +
+      labs(x = "Placenta", y = "6 months", title = paste("Correlation between",  placenta_pfas_names[i], "and 6 month", most_detected_pfas[i]))
+ 
+ print(p) 
+}
+dev.off()
+
+```
+
+```{r 24mo PFAS ~ placental PFAS}
+subset = PFAS_24mo_6mo_bayley %>% select( contains("mo24") | contains("placenta") ) 
+
+
+
+pdf(file = "pairwise_correlations_24mo_placenta.pdf") 
+
+for( i in 1:7){
+ p =  ggplot(subset, aes_string(x = placenta_pfas_names[i], y = paste0("mo24_", most_detected_pfas[i]))) +
+      geom_point() + # Add scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "blue") + # Add linear regression line without standard error
+      stat_cor(method = "spearman", label.x.npc = "left", label.y.npc = "top")  +
+      labs(x = "Placenta", y = "24 months", title = paste("Correlation between",  placenta_pfas_names[i], "and 24 month", most_detected_pfas[i]))
+ 
+ print(p) 
+}
+dev.off()
+
+```
+
+
+
+
+
+```{r}
+
+
+pdf(file = "corplot_allpfas.pdf") 
+
+match = unique(sub("_.*", "", most_detected_pfas)) 
+
+for (p in match) {
+  subset = PFAS_24mo_6mo_bayley %>% select(contains(p))
+  
+  # Compute correlations and p-values
+  rc = Hmisc::rcorr(as.matrix(subset), type = "spearman")
+  cor_matrix <- round(rc$r, 2)
+  p_matrix <- rc$P
+  
+  # Melt correlation and p-value matrices
+  melted_cor <- reshape2::melt(cor_matrix)
+  melted_p <- reshape2::melt(p_matrix)
+  
+  # Merge them
+  melted <- left_join(melted_cor, melted_p, by = c("Var1", "Var2"))
+  colnames(melted) <- c("Var1", "Var2", "Correlation", "pvalue")
+  
+  # Create significance labels
+  melted$label <- ifelse(melted$pvalue < 0.001, "***",
+                  ifelse(melted$pvalue < 0.01, "**",
+                  ifelse(melted$pvalue < 0.05, "*", "")))
+  
+  # Plot
+  p = ggplot(data = melted, aes(x = Var1, y = Var2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = label), size = 2, color = "black") + # adds p-value stars
+    scale_fill_gradient2(
+      low = "blue",
+      high = "red",
+      mid = "white",
+      midpoint = 0,
+      limit = c(-1, 1),
+      name = "Spearman\nCorrelation"
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+     labs(x = "", y= "") + 
+    coord_fixed()
+  
+  print(p)
+}
+
+dev.off()
+
+
+```
+
+
+
+
+#PFAS associated with BF: correlation coef + p-values, heatmap of coefs
+6mo PFOS ~ Breatfeeding duration 
+24mo PFOS ~ Breatfeeding duration 
+60mo PFOS ~ Breatfeeding duration 
+
+```{r}
+pdf(file = "corplot_bf_pfas.pdf") 
+
+match = unique(sub("_.*", "", most_detected_pfas)) 
+
+for (p in match) {
+  subset = PFAS_24mo_6mo_bayley %>% select(contains(p), -contains("placenta"), bf_length_mo, -starts_with("T"))
+  
+  # Compute correlations and p-values
+  rc = Hmisc::rcorr(as.matrix(subset), type = "spearman")
+
+  cor_matrix <- round(rc$r, 2)
+  p_matrix <- rc$P
+  
+  # Melt correlation and p-value matrices
+  melted_cor <- melt(cor_matrix)
+  melted_p <- melt(p_matrix)
+  
+  # Merge them
+  melted <- left_join(melted_cor, melted_p, by = c("Var1", "Var2"))
+  colnames(melted) <- c("Var1", "Var2", "Correlation", "pvalue")
+  
+  # Create significance labels
+  melted$label <- ifelse(melted$pvalue < 0.001, "***",
+                  ifelse(melted$pvalue < 0.01, "**",
+                  ifelse(melted$pvalue < 0.05, "*", "")))
+  
+  # Plot
+  p = ggplot(data = melted, aes(x = Var1, y = Var2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = label), size = 2, color = "black") + # adds p-value stars
+    scale_fill_gradient2(
+      low = "blue",
+      high = "red",
+      mid = "white",
+      midpoint = 0,
+      limit = c(-1, 1),
+      name = "Spearman\nCorrelation"
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+     labs(x = "", y= "") + 
+    coord_fixed()
+  
+  print(p)
+}
+
+dev.off()
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+pfas_months = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
+
+
+  data = PFAS_24mo_6mo_bayley %>%
+    select(contains("mo")) %>%
+    select(contains(pfas_months)) %>%
+    select(order(parse_number(names(.))))
+  
+colnames(data) <- gsub("_Total", "", colnames(data))
+colnames(data) <- gsub("_", " ", colnames(data)) 
+
+cor_matrix = data %>% cor_mat(method = "spearman")
+p_matrix = data %>% cor_pmat(method = "spearman") 
+
+melted_cor = melt(cor_matrix)
+melted_p = melt(p_matrix)
+  # Merge them
+  melted <- left_join(melted_cor, melted_p, by = c("rowname", "variable"))
+  
+  colnames(melted) <- c("Var1", "Var2", "correlation", "pvalue")
+  melted$pvalue[which(melted$pvalue == 0)] = NA
+  # Create significance labels
+  melted$label <- ifelse(melted$pvalue < 0.001, "***",
+                  ifelse(melted$pvalue <0.01, "**",
+                  ifelse(melted$pvalue < 0.05, "*", "")))
+  melted$Var2 <- as.factor(melted$Var2) 
+
+  # Plot
+  ggplot(data = melted, aes(x = Var1, y = Var2, fill = correlation)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = label), size = 1, color = "black") + # adds p-value stars
+    scale_fill_gradient2(
+      low = "blue",
+      high = "red",
+      mid = "white",
+      midpoint = 0,
+      limit = c(-1, 1),
+      name = "Spearman\nCorrelation"
+    ) +
+    theme_minimal(base_size = 5) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1), legend.key.size = unit(0.2, "cm"), legend.key.height =unit(0.2, 'cm'), legend.key.width =unit(0.1, 'cm'), legend.position = "right",  plot.title = element_text(hjust = 0.5, face = "bold", size = 5), legend.title = element_text(size = 3), legend.text = element_text(size = 2.5), plot.margin = margin(t =0, r = 0, b= 0, l= 0 ))  +
+     labs(x = "", y= "", title = "6-, 24-, and 60-month \n PFAS Correlations") +
+    xlim(levels(melted$Var2))
+
+
+```
+
+```{r}
+pfas_months = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
+
+
+  data = PFAS_24mo_6mo_60mo_placenta %>%
+    select(contains("mo")) %>%
+    select(contains(pfas_months),bf_length_mo) 
+colnames(data) <- gsub("mo6_","0.5yr ",colnames(data))
+colnames(data) <- gsub("mo60_","5yr ",colnames(data))
+colnames(data) <- gsub("mo24_","2yr ",colnames(data))
+colnames(data) <- gsub("_Total", "", colnames(data))
+
+
+colnames(data)[13] = "months breastfeeding"
+  
+cor_matrix = data %>% cor_mat(method = "spearman")
+p_matrix = data %>% cor_pmat(method = "spearman") 
+
+melted_cor = melt(cor_matrix)
+melted_p = melt(p_matrix)
+  # Merge them
+  melted <- left_join(melted_cor, melted_p, by = c("rowname", "variable")) %>% filter(variable == colnames(data)[13]) 
+colnames(melted) <- c("timepoints", "chemicals", "correlation", "pvalue")
+
+melted$pvalue[which(melted$pvalue == 0)] = NA
+  # Create significance labels
+melted$label <- ifelse(melted$pvalue < 0.001, "***",
+                  ifelse(melted$pvalue <0.01, "**",
+                  ifelse(melted$pvalue < 0.05, "*", "")))
+
+melted = melted[1:12,] 
+melted$chemicals = sub(".*? ", "", melted$timepoints)
+melted$timepoints = gsub(" .*$", "", melted$timepoints)
+
+
+melted$timepoints <- factor(melted$timepoints, levels = c("0.5yr", "2yr", "5yr"))
+#melted$chemicals <- factor(melted$chemicals, levels = chemicals)
+
+
+# Plot heatmap (3 rows × 4 columns)
+ggplot(melted, aes(x = chemicals, y = timepoints, fill = correlation)) +
+  geom_tile(color = "white") +
+     geom_text(aes(label = label), size = 2.5, color = "black") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), 
+                       name = "Spearman\nCorrelation") +
+    theme_minimal(base_size = 5) +
+    theme( legend.key.size = unit(0.2, "cm"), legend.key.height =unit(0.2, 'cm'), legend.key.width =unit(0.1, 'cm'), legend.position = "right",  plot.title = element_text(hjust = 0.5, face = "bold", size = 5), legend.title = element_text(size = 3), legend.text = element_text(size = 2.5), plot.margin = margin(t =0, r = 0, b= 0, l= 0 ))  +
+     labs(x = "", y= "") 
+
+ 
+
+
+```
+
+```{r}
+mo60 = PFAS_24mo_6mo_60mo_placenta %>% select(contains("mo60")) 
+
+mo60 = mo60[complete.cases(mo60), ]
+```
+
+```{r}
+library(qgcomp)
+# "cogn_comp_24"  "lang_comp_24"  "motor_comp_24" "soc_emo_24"    "adapt_gac_24" 
+qgcomp(adapt_gac_24 ~ mo24_PFOS_Total + mo24_PFOA + mo24_PFHxS_Total + mo24_PFNA + mom_age_at_birth + mom_education + official_enroll_category + gest_age_in_weeks_edd + child_sex +  bf_length_mo , expnms = c("mo24_PFOS_Total",  "mo24_PFOA", "mo24_PFHxS_Total", "mo24_PFNA"), data = PFAS_24mo_6mo_60mo_placenta, q = 4)
+
+ 
+
+```
+
+```{r}
+nobf_q_gcomp = qgcomp( adapt_gac_24 ~ mo24_PFOS_Total + mo24_PFOA + mo24_PFHxS_Total + mo24_PFNA + mom_age_at_birth + mom_education + official_enroll_category + gest_age_in_weeks_edd + child_sex  , expnms = c("mo24_PFOS_Total",  "mo24_PFOA", "mo24_PFHxS_Total", "mo24_PFNA"), data = PFAS_24mo_6mo_60mo_placenta, q = 4)
+
+nobf_q_gcomp
+
+```
+

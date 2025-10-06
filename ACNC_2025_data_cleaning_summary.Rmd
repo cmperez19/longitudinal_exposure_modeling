@@ -1,0 +1,246 @@
+---
+title: "ACNC_2025_data_cleaning_summary"
+author: "Cynthia Perez"
+date: "2025-08-25"
+output: html_document
+---
+
+## Create a copy of these data, then create a smaller data set that only includes those Glowing samples from 6mo and from 24mo [G-XXX & G-XXX 24month].
+```{r data cleaning}
+library(readxl)
+library(tidyverse)
+library(ggpubr)
+ACNC <- read_excel("Final Results ACNC 2025.xlsx", sheet = 1) 
+thresholds <- read_excel("Final Results ACNC 2025.xlsx", sheet = 2) # I created this sheet and transposed it on excel 
+
+#replacing space from header names with a _
+names(ACNC) <- gsub(" ", "_", names(ACNC))
+thresholds$PFAS <- gsub(" ", "_", thresholds$PFAS)
+thresholds = data.frame(thresholds)
+rownames(thresholds) = thresholds$PFAS
+
+#extracting sample names with G- and 24 mo in name
+ACNC_24mo = ACNC %>% filter(str_detect(Sample_Name, "G-") & str_detect(Sample_Name, " 24mo") ) 
+dim(ACNC_24mo)
+
+#dropping 24 mo from name to filter for 6 mo 
+IDs = str_extract(ACNC_24mo$Sample_Name, "^[^ ]+")
+
+ACNC_6mo = ACNC %>% filter(Sample_Name %in% IDs)
+dim(ACNC_6mo)
+```
+
+# removing duplicates and not shared IDs 
+```{r}
+# identifying duplicates in full data set
+ACNC$Sample_Name[duplicated(ACNC$Sample_Name)]
+
+#samples that do not have a 24 mo but no 6 mo
+remove = IDs[!(IDs %in% ACNC_6mo$Sample_Name)]
+remove
+#all 6 mo samples have a 24 mo sample
+# two 24 mo samples are duplicates I am dropping the duplicate - should it be completely removed? 
+ACNC_24mo =
+  ACNC_24mo %>%
+  distinct(Sample_Name, .keep_all = TRUE) %>% # it keeps only the first occurrence
+  filter(!str_extract(Sample_Name, "^[^ ]+") %in% remove)
+
+```
+
+## Then apply the LOD cutoff that we've been using - 0.1ng/g - convert values below this to missing
+instead will be using corresponding LOQ values 
+##Then create a table that presents the rate of detection >= the LOD for each PFAS, separately for the 6mo ad 24mo samples
+##Then impute those the missing values with 0.01/sqrt(2)
+
+```{r}
+# first changing the NR values to "0" won't let me change it directly to NA 
+ACNC_6mo <- ACNC_6mo %>%
+  mutate(across(everything(), ~ ifelse(. == "NR", "0", .))) %>% 
+  mutate(across(-1, as.numeric))  # setting all columns to numeric except first
+
+  
+ACNC_24mo <- ACNC_24mo %>%
+  mutate(across(everything(), ~ ifelse(. == "NR", "0", .))) %>%
+  mutate(across(-1, as.numeric))  # setting all columns to numeric except first
+
+
+
+#summing values also and saving them in dataframe above_LOD
+above_LOD <- data.frame(
+   mo6 = numeric(),
+   mo24 = numeric(),
+  stringsAsFactors = FALSE
+)
+
+#using a for loop to make values less than approprite threshold NA 
+for( p in colnames(ACNC_6mo)[2:36]){
+  LOQ = thresholds[p, 2]
+  imputed_value = LOQ/sqrt(2)
+  
+  ACNC_6mo[,p] = if_else(ACNC_6mo[,p] < LOQ , NA, ACNC_6mo[,p])
+  ACNC_24mo[,p] = if_else(ACNC_24mo[,p] < LOQ , NA, ACNC_24mo[,p])
+  
+  above_LOD[p,"mo6"] <- sum(ACNC_6mo[,p] >= LOQ, na.rm = TRUE)
+  above_LOD[p,"mo24"] <- sum(ACNC_24mo[,p] >= LOQ, na.rm = TRUE)
+  
+  # imputation done at the end 
+ ACNC_6mo[,p] = replace(ACNC_6mo[,p], is.na(ACNC_6mo[,p]), imputed_value)
+ ACNC_24mo[,p] = replace(ACNC_24mo[,p], is.na(ACNC_24mo[,p]), imputed_value) 
+}
+
+above_LOD
+
+```
+
+
+
+
+## Then create a large table that presents the geometric mean, geometric standard deviation, and range of absolute values (min:max) for each PFAS, separately for 6mo and 24mo
+```{r}
+multiple_stats <- function(x) {
+      c(geom_mean = exp(mean(log(x))), geom_sd = exp(sd(log(x))), min_val = min(x), max_val = max(x) )}
+
+stats_6mo = t(sapply(ACNC_6mo[,2:36], multiple_stats)) 
+stats_6mo
+stats_24mo = t(sapply(ACNC_24mo[,2:36], multiple_stats)) 
+stats_24mo
+
+```
+
+## Then create some visualization of the PFAS levels overall, and how they change within a participant between 6om and 24mo. Do levels tend to stay stable, or do they tend to increase/decrease? Or is it pretty different for everyone?
+
+```{r}
+#ACNC_24mo$length = rep("24mo", 124)
+#ACNC_6mo$length = rep("6mo", 124)
+
+datas = bind_rows(ACNC_6mo, ACNC_24mo) %>%
+      pivot_longer(
+        cols = -starts_with("Sa"), # Select columns to pivot
+        names_to = "Chemical",         # New column for original column names
+        values_to = "Concentration"          # New column for values
+      ) %>% 
+     mutate(Time_Point = if_else(str_detect(Sample_Name, "24mo"), "24mo", "6mo"))  %>% 
+  mutate(Chemical_Class = case_when(
+    str_detect(Chemical, "PFOA|PFTr|PFTe|PFPe|PFNA|PFDo|PFUd|PFDA|PFBA|PFHxA|PFHpA") ~ "PFCA",
+    str_detect(Chemical, "PFOS|PFHxS|PFDS|PFBS|PFNS|PFHpS") ~ "PFSA",
+    str_detect(Chemical, "FTS") ~ "FTS",
+    str_detect(Chemical, "FOSA") ~ "FOSAs",
+    TRUE ~ "Other"
+  ))
+
+datas$Sample_Name = str_extract(datas$Sample_Name, "^[^ ]+")
+    
+```
+
+
+```{r}
+ggplot(datas, aes(x = Chemical, y = log10(Concentration), fill = Time_Point)) +
+  geom_boxplot(outlier.shape = NA) +
+  coord_flip() +
+  facet_wrap(~ Chemical_Class, scales = "free_y") +
+ scale_fill_brewer(palette = "Set1") +
+  labs(
+    x = "PFAS",
+    y = expression(Log[10]~Concentration),
+    fill = "Time Point",
+    title = "PFAS Concentrations at 6 months vs 24 months"
+  )  +
+  theme_bw(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 8),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+  
+```
+
+```{r}
+datas$Time_Point <- factor(datas$Time_Point, levels = c("6mo", "24mo"))
+avg_diff <- datas %>%
+  group_by(Chemical, Sample_Name) %>%
+  summarise(diff = diff(log10(Concentration[order(Time_Point)])), .groups = "drop") %>%
+  group_by(Chemical) %>%
+  summarise(mean_diff = mean(diff, na.rm = TRUE))
+```
+
+
+```{r}
+pdf("avg_diff_pfas.pdf", width = 8, height = 6) 
+
+facet_levels <- unique(datas$Chemical)
+
+for (level in facet_levels) {
+  subset_data <- subset(datas, Chemical == level)
+
+  # mean difference for this chemical
+  diff_val <- avg_diff$mean_diff[avg_diff$Chemical == level]
+  
+  p <- ggplot(subset_data, aes(x=Time_Point, y=log10(Concentration), group=Sample_Name, colour=Sample_Name)) +
+    geom_point(size = 2, alpha = 0.7) + 
+    geom_line(alpha = 0.5) +
+    theme_bw(base_size = 14) +
+    theme(legend.position = "none") +
+    labs(
+      title = paste("PFAS:", level),
+      subtitle = paste("Mean Δ (6mo - 24mo):", round(diff_val, 2)),
+      x = "Time Point", 
+      y = expression(Log[10]~Concentration)
+    )
+  
+  print(p)
+}
+dev.off()
+```
+
+
+
+```{r}
+above_LOD$percent_mo24 = above_LOD$mo24/124*100
+above_LOD$percent_mo6 = above_LOD$mo6/124*100
+
+pfas_above70_mo6 = rownames(above_LOD)[which(above_LOD$percent_mo6 > 70)]
+
+pfas_above70_mo24 =rownames(above_LOD)[which(above_LOD$percent_mo24 > 70)]
+
+# both mo6 and mo24 have the same pfas above 70%
+
+
+```
+# would be pairwise correlations for each PFAS: scatter plots with 6mo on the x axis and 24mo on the y-axis, then correlations coefficient and p-values. Only do this for the PFAS that are well detected (>70%).
+
+
+```{r}
+pfas_cor = cor(ACNC_6mo[,pfas_above70_mo6], ACNC_24mo[,pfas_above70_mo24])
+```
+
+
+
+```{r}
+mo24 = ACNC_24mo %>% mutate(Sample_Name = str_extract(Sample_Name, "^[^ ]+")) %>% arrange(Sample_Name)  %>% select( contains("Sample") | contains(pfas_above70_mo24) ) 
+colnames(mo24)[2:8] = sapply(colnames(mo24)[2:8], function(name) paste0("mo24_", name))
+
+subset = ACNC_6mo %>% select( contains("Sample") | contains(pfas_above70_mo24) ) %>% left_join(mo24, by = "Sample_Name") %>% mutate(across(-1, ~ log(.)))
+
+
+```
+
+
+```{r}
+pdf(file = "pairwise_correlations.pdf") 
+
+for( i in pfas_above70_mo24){
+ p =  ggplot(subset, aes_string(x = i, y = paste0("mo24_",i))) +
+      geom_point() + # Add scatter points
+      geom_smooth(method = "lm", se = FALSE, color = "blue") + # Add linear regression line without standard error
+      stat_cor(method = "spearman", label.x.npc = "left", label.y.npc = "top")  +
+      labs(x = "6 months", y = "24 months", title = paste("Correlation between 6 month and 24 month", i))
+ 
+ print(p) 
+}
+dev.off()
+
+```
+
+
+
