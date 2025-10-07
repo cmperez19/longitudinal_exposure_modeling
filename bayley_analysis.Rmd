@@ -16,7 +16,7 @@ library(reshape2)
 library(corrplot)
 library(rstatix)
 library(reshape2)
-
+setwd("~/postnatal_pfas")
 
 load("cleaned_ACNC.RData")
 load("Glowing_PFAS_BSID_finaldata_101016_jenvadv2025100650.RData")
@@ -82,7 +82,7 @@ colnames(placenta_pfas)[2:6] = sapply(colnames(placenta_pfas)[2:6], function(nam
 PFAS_24mo_6mo_placenta = PFAS_24mo_6mo_bayley  %>% left_join(placenta_pfas, by = "Sample_Name")
 
 
-ACNC_60mo = read.xlsx("PFAS_Cleaned_Continuous.xlsx") 
+ACNC_60mo = read.xlsx("~/postnatal_pfas/PFAS_Cleaned_Continuous.xlsx") 
 
 ACNC_60mo = ACNC_60mo %>% filter(Visit == "60mo") %>% select(StudyID.GE, contains("PF")) %>% filter(str_detect(StudyID.GE, "G-") ) %>% dplyr::rename("Sample_Name" = "StudyID.GE") %>% mutate(across(-1, ~ log(.)))
 
@@ -93,6 +93,7 @@ colnames(ACNC_60mo)[2:8] = sapply(colnames(ACNC_60mo)[2:8], function(name) paste
 #I was only able to match 38 IDs 
 
 PFAS_24mo_6mo_60mo_placenta = PFAS_24mo_6mo_placenta %>% left_join(ACNC_60mo,by = "Sample_Name")
+#save(PFAS_24mo_6mo_60mo_placenta, file = "longitudinal_pfas_bayley.RData")
 ```
 
 

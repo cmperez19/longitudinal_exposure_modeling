@@ -1,0 +1,38 @@
+```{r}
+library(lme4)
+library(tidyverse)
+load("~/postnatal_pfas/longitudinal_pfas_bayley.RData")
+
+```
+
+```{r}
+most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br", "PFOS_Total" ,"PFOA","PFNA")
+
+placenta_pfas_names = c("placenta_PFHxS", "placenta_PFHxS", "placenta_sPFOS", "placenta_sPFOS",  "placenta_sPFOS", "placenta_LPFOA",  "placenta_PFNA")
+```
+
+```{r}
+pfas = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
+
+
+longitudinal_pfas = PFAS_24mo_6mo_60mo_placenta %>%
+        select(-contains("placenta")) %>% 
+        select(contains(pfas), bf_length_mo, Sample_Name,  mom_age_at_birth,     official_enroll_category, gest_age_in_weeks_edd, 
+          mom_education, child_sex)  %>% 
+         pivot_longer(cols = starts_with(c("mo6", "mo24", "mo60")), 
+                              names_to = "pfas",
+                             values_to = "concentration") %>% 
+          mutate(month = sub("_.*", "", pfas)) %>% 
+          mutate(chemical = sub(".*?_", "", pfas)) %>% 
+          select(-pfas) %>% 
+          group_by(chemical) %>% 
+          group_split()
+```
+
+```{r}
+model_pfos <- lmer(cbind(mo60_PFOS_Total, mo24_PFOS_Total, mo6_PFOS_Total) ~ bf_length_mo + (1 | Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas)
+
+summary(model_pfos)
+
+```
+
