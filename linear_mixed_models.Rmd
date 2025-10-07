@@ -3,17 +3,17 @@ library(lme4)
 library(tidyverse)
 load("~/postnatal_pfas/longitudinal_pfas_bayley.RData")
 
-```
+#I noticed that because of the 12 NA variables in bf_length_mo lmer() would drop the sample size to 69. I am going to take an executive decision and change those values to 0. 
+#index of samples with NA bf length 
+#3  6 19 26 43 45 46 52 54 61 62 64
+#it appears that pfas was quantified for these samples at 6 and 24 months so bf length should have been included 
+#PFAS_24mo_6mo_60mo_placenta[which(!complete.cases(PFAS_24mo_6mo_60mo_placenta$bf_length_mo)),] %>% select(Sample_Name, contains("mo")) 
 
-```{r}
-most_detected_pfas = c("PFHxS_L","PFHxS_Total", "PFOS_L", "PFOS_Br", "PFOS_Total" ,"PFOA","PFNA")
-
-placenta_pfas_names = c("placenta_PFHxS", "placenta_PFHxS", "placenta_sPFOS", "placenta_sPFOS",  "placenta_sPFOS", "placenta_LPFOA",  "placenta_PFNA")
+PFAS_24mo_6mo_60mo_placenta[which(!complete.cases(PFAS_24mo_6mo_60mo_placenta$bf_length_mo)),"bf_length_mo"] = 0 
 ```
 
 ```{r}
 pfas = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
-
 
 longitudinal_pfas = PFAS_24mo_6mo_60mo_placenta %>%
         select(-contains("placenta")) %>% 
@@ -24,15 +24,59 @@ longitudinal_pfas = PFAS_24mo_6mo_60mo_placenta %>%
                              values_to = "concentration") %>% 
           mutate(month = sub("_.*", "", pfas)) %>% 
           mutate(chemical = sub(".*?_", "", pfas)) %>% 
+          mutate(year = case_when(month == "mo6" ~ 0.5, 
+                                  month == "mo24" ~ 2,
+                                  month == "mo60" ~ 5, 
+                                  )) %>% 
           select(-pfas) %>% 
           group_by(chemical) %>% 
           group_split()
+
+#naming list elements after chemical
+names(longitudinal_pfas) = c(unique(longitudinal_pfas[[1]]$chemical), unique(longitudinal_pfas[[2]]$chemical), unique(longitudinal_pfas[[3]]$chemical), unique(longitudinal_pfas[[4]]$chemical))
+```
+
+** Likelihood is the probability of seeing the data you collected given your model.
+The logic of the likelihood ratio test is to compare the likelihood of two models
+with each other. First, the model without the factor that you’re interested in (the
+null model), then the model with the factor that you’re interested in ** 
+
+** (1 | subjectid): This part of the formula requests a random intercept for each subjectid. It means each subject has their own starting point (intercept) for the outcome variable.
+(year | subjectid): This part requests a random slope for year within each subjectid. It allows the relationship between the predictor year and the outcome to vary from one subject to another.  ** 
+
+```{r}
+model_pfhxs <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex ,  data=longitudinal_pfas[[1]])
+
+model_pfhxs_null <- lmer(concentration ~  (1 + year | Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[1]])
+
+anova(model_pfhxs_null,model_pfhxs)
+```
+
+
+```{r}
+model_pfna <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[2]])
+
+model_pfna_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[2]])
+
+anova(model_pfna,model_pfna_null)
+
 ```
 
 ```{r}
-model_pfos <- lmer(cbind(mo60_PFOS_Total, mo24_PFOS_Total, mo6_PFOS_Total) ~ bf_length_mo + (1 | Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas)
+model_pfoa <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[3]])
 
-summary(model_pfos)
+model_pfoa_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[3]])
+
+anova(model_pfoa,model_pfoa_null)
 
 ```
+
+```{r}
+model_pfos <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[4]])
+
+model_pfos_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[4]])
+
+anova(model_pfos,model_pfos_null)
+```
+
 
