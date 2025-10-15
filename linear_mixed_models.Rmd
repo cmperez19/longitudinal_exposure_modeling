@@ -1,6 +1,7 @@
 ```{r}
 library(lme4)
 library(tidyverse)
+library(stats)
 load("~/postnatal_pfas/longitudinal_pfas_bayley.RData")
 
 #I noticed that because of the 12 NA variables in bf_length_mo lmer() would drop the sample size to 69. I am going to take an executive decision and change those values to 0. 
@@ -50,6 +51,8 @@ model_pfhxs <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom
 model_pfhxs_null <- lmer(concentration ~  (1 + year | Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[1]])
 
 anova(model_pfhxs_null,model_pfhxs)
+
+summary(model_pfhxs)
 ```
 
 
@@ -79,4 +82,27 @@ model_pfos_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_bi
 anova(model_pfos,model_pfos_null)
 ```
 
+#creating a group for the length of breastfeeding  (0, > 0–3, > 3–12, > 12 months) 
+```{r}
+PFAS_24mo_6mo_60mo_placenta = PFAS_24mo_6mo_60mo_placenta %>% mutate(bf_group = case_when(bf_length_mo <= 3 ~ "1", 
+                                                            bf_length_mo > 3 & bf_length_mo < 12 ~ "2",
+                                                            bf_length_mo >= 12 ~ "3"))
+```
+
+```{r}
+pfas= c("mo24_PFOS_Total", "mo60_PFOS_Total", "mo24_PFOA", "mo60_PFOA", "mo24_PFHxS_Total", "mo60_PFHxS_Total", "mo24_PFNA", "mo60_PFNA")
+bf_group_results = list()
+bf_group_posthoc = list()
+for( p in pfas ){
+   formula_str <- paste(p, "~ bf_group + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex") 
+  model <- aov(as.formula(formula_str), data = PFAS_24mo_6mo_60mo_placenta)
+  bf_group_results[[p]] <- summary(model)
+  bf_group_posthoc[[p]] <- TukeyHSD(model, "bf_group")
+}
+bf_group_results
+bf_group_posthoc
+```
+```{r}
+
+```
 
