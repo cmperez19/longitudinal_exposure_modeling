@@ -1,5 +1,5 @@
 ```{r}
-library(lme4)
+library(lmerTest)
 library(tidyverse)
 library(stats)
 load("~/postnatal_pfas/longitudinal_pfas_bayley.RData")
@@ -48,38 +48,56 @@ null model), then the model with the factor that you’re interested in **
 ```{r}
 model_pfhxs <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex ,  data=longitudinal_pfas[[1]])
 
-model_pfhxs_null <- lmer(concentration ~  (1 + year | Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[1]])
+#model_pfhxs_null <- lmer(concentration ~  (1 + year | Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[1]])
 
-anova(model_pfhxs_null,model_pfhxs)
+#anova(model_pfhxs_null,model_pfhxs)
 
 summary(model_pfhxs)
+confint(profile(model_pfhxs), level = 0.95)
 ```
 
 
-```{r}
+```{r, warning=FALSE}
 model_pfna <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[2]])
 
-model_pfna_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[2]])
+#model_pfna_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[2]])
 
-anova(model_pfna,model_pfna_null)
-
+#anova(model_pfna,model_pfna_null)
+summary(model_pfna)
+confint(profile(model_pfna), level = 0.95)
 ```
 
-```{r}
+```{r, warning=FALSE}
 model_pfoa <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[3]])
 
-model_pfoa_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[3]])
+#model_pfoa_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[3]])
 
-anova(model_pfoa,model_pfoa_null)
+#anova(model_pfoa,model_pfoa_null)
 
+summary(model_pfoa)
+confint(profile(model_pfoa), level = 0.95)
 ```
 
-```{r}
+```{r, warning=FALSE}
 model_pfos <- lmer(concentration ~ bf_length_mo + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[4]])
 
-model_pfos_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[4]])
+#model_pfos_null <- lmer(concentration ~  (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[4]])
 
-anova(model_pfos,model_pfos_null)
+#anova(model_pfos,model_pfos_null)
+
+summary(model_pfos)
+confint(profile(model_pfos), level = 0.95)
+```
+#linear mixed methods with year * bf_duration
+```{r, warning=FALSE}
+for( i in 1:length(longitudinal_pfas)){
+model <- lmer(concentration ~ bf_length_mo:year + (1 + year| Sample_Name) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex,  data=longitudinal_pfas[[i]])
+
+print(pfas[i])
+print(summary(model)) 
+print(confint(profile(model), level = 0.95))
+
+}
 ```
 
 #creating a group for the length of breastfeeding  (0, > 0–3, > 3–12, > 12 months) 
@@ -89,7 +107,8 @@ PFAS_24mo_6mo_60mo_placenta = PFAS_24mo_6mo_60mo_placenta %>% mutate(bf_group = 
                                                             bf_length_mo >= 12 ~ "3"))
 ```
 
-```{r}
+#one way anova with three groups 
+```{r, warning=FALSE}
 pfas= c("mo24_PFOS_Total", "mo60_PFOS_Total", "mo24_PFOA", "mo60_PFOA", "mo24_PFHxS_Total", "mo60_PFHxS_Total", "mo24_PFNA", "mo60_PFNA")
 bf_group_results = list()
 bf_group_posthoc = list()
@@ -102,7 +121,26 @@ for( p in pfas ){
 bf_group_results
 bf_group_posthoc
 ```
-```{r}
 
+#repeated measures anova using long data
+Error(subject/time): Specifies that subject is a random effect and time is nested within subject
+https://www.geeksforgeeks.org/r-language/repeated-measures-within-subjects-anova-in-r/
+
+```{r}
+aov_model_pfhxs <- aov(concentration ~ bf_length_mo + Error(Sample_Name/year) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex , data = longitudinal_pfas$PFHxS_Total)
+# View the summary of the ANOVA
+summary(aov_model_pfhxs)
+
+aov_model_pfoa <- aov(concentration ~ bf_length_mo + Error(Sample_Name/year) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex , data = longitudinal_pfas$PFOA)
+# View the summary of the ANOVA
+summary(aov_model_pfoa)
+
+aov_model_pfos <- aov(concentration ~ bf_length_mo + Error(Sample_Name/year) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex , data = longitudinal_pfas$PFOS_Total)
+# View the summary of the ANOVA
+summary(aov_model_pfos)
+
+aov_model_pfna <- aov(concentration ~ bf_length_mo + Error(Sample_Name/year) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex , data = longitudinal_pfas$PFNA)
+# View the summary of the ANOVA
+summary(aov_model_pfna)
 ```
 
