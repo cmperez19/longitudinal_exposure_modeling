@@ -14,11 +14,20 @@ PFAS_24mo_6mo_60mo_placenta[which(!complete.cases(PFAS_24mo_6mo_60mo_placenta$bf
 ```
 
 ```{r}
+#creating a group for the length of breastfeeding  (0, > 0–3, > 3–12, > 12 months) 
+
+PFAS_24mo_6mo_60mo_placenta = PFAS_24mo_6mo_60mo_placenta %>% mutate(bf_group = case_when(bf_length_mo <= 3 ~ "1", 
+                                                            bf_length_mo > 3 & bf_length_mo < 12 ~ "2",
+                                                            bf_length_mo >= 12 ~ "3"))
+```
+
+
+```{r}
 pfas = c("PFOS_Total", "PFOA", "PFHxS_Total", "PFNA")
 
 longitudinal_pfas = PFAS_24mo_6mo_60mo_placenta %>%
         select(-contains("placenta")) %>% 
-        select(contains(pfas), bf_length_mo, Sample_Name,  mom_age_at_birth,     official_enroll_category, gest_age_in_weeks_edd, 
+        select(contains(pfas), bf_length_mo, Sample_Name,  mom_age_at_birth,     official_enroll_category, gest_age_in_weeks_edd, bf_group,
           mom_education, child_sex)  %>% 
          pivot_longer(cols = starts_with(c("mo6", "mo24", "mo60")), 
                               names_to = "pfas",
@@ -36,6 +45,7 @@ longitudinal_pfas = PFAS_24mo_6mo_60mo_placenta %>%
 #naming list elements after chemical
 names(longitudinal_pfas) = c(unique(longitudinal_pfas[[1]]$chemical), unique(longitudinal_pfas[[2]]$chemical), unique(longitudinal_pfas[[3]]$chemical), unique(longitudinal_pfas[[4]]$chemical))
 ```
+
 
 ** Likelihood is the probability of seeing the data you collected given your model.
 The logic of the likelihood ratio test is to compare the likelihood of two models
@@ -100,12 +110,6 @@ print(confint(profile(model), level = 0.95))
 }
 ```
 
-#creating a group for the length of breastfeeding  (0, > 0–3, > 3–12, > 12 months) 
-```{r}
-PFAS_24mo_6mo_60mo_placenta = PFAS_24mo_6mo_60mo_placenta %>% mutate(bf_group = case_when(bf_length_mo <= 3 ~ "1", 
-                                                            bf_length_mo > 3 & bf_length_mo < 12 ~ "2",
-                                                            bf_length_mo >= 12 ~ "3"))
-```
 
 #one way anova with three groups 
 ```{r, warning=FALSE}
@@ -142,5 +146,28 @@ summary(aov_model_pfos)
 aov_model_pfna <- aov(concentration ~ bf_length_mo + Error(Sample_Name/year) + mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex , data = longitudinal_pfas$PFNA)
 # View the summary of the ANOVA
 summary(aov_model_pfna)
+```
+
+```{r}
+for( i in 1:4){
+plot =  ggplot(aes( x = concentration, fill = factor(year)), data = longitudinal_pfas[[i]]) + geom_density(alpha = 0.5) + labs( title = names(longitudinal_pfas)[i])
+print( plot)
+}
+```
+
+```{r}
+pfas= c("mo24_PFOS_Total", "mo60_PFOS_Total", "mo24_PFOA", "mo60_PFOA", "mo24_PFHxS_Total", "mo60_PFHxS_Total", "mo24_PFNA", "mo60_PFNA")
+
+for( i in 1:8){
+p = ggplot(aes_string( x = pfas[i], fill = "bf_group"), data = PFAS_24mo_6mo_60mo_placenta) + geom_density(alpha = 0.5)
+print(p)
+}
+```
+
+```{r}
+for( i in 1:4){
+plot =  ggplot(aes( y = concentration, x = year, color = factor(bf_group)), data = longitudinal_pfas[[i]]) + geom_path() + labs( title = names(longitudinal_pfas)[i])
+print( plot)
+}
 ```
 
