@@ -2,6 +2,7 @@
 library(lmerTest)
 library(tidyverse)
 library(stats)
+library(segmented)
 load("~/postnatal_pfas/longitudinal_pfas_bayley.RData")
 
 #I noticed that because of the 12 NA variables in bf_length_mo lmer() would drop the sample size to 69. I am going to take an executive decision and change those values to 0. 
@@ -38,7 +39,7 @@ longitudinal_pfas = PFAS_24mo_6mo_60mo_placenta %>%
                                   month == "mo24" ~ 2,
                                   month == "mo60" ~ 5, 
                                   )) %>% 
-          select(-pfas) %>% 
+          select(pfas) %>% 
           group_by(chemical) %>% 
           group_split()
 
@@ -169,5 +170,12 @@ for( i in 1:4){
 plot =  ggplot(aes( y = concentration, x = year, color = factor(bf_group)), data = longitudinal_pfas[[i]]) + geom_path() + labs( title = names(longitudinal_pfas)[i])
 print( plot)
 }
+```
+
+```{r}
+knots = c(0.5,5)
+linear_model <- lm( concentration ~ bf_group *  bs(year, knots = knots, degree = 1)+ mom_age_at_birth + official_enroll_category + gest_age_in_weeks_edd + mom_education + child_sex, data = longitudinal_pfas$PFOS_Total)
+summary(linear_model)
+
 ```
 

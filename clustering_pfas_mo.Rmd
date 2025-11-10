@@ -1,0 +1,224 @@
+```{r}
+
+#focus only on PFHxS.Total, PFOS.Total, PFOA, PFNA 
+library(tidyverse)
+library(mclust)
+load("~/postnatal_pfas/PFAS_Cleaned_4Continuous_5Binary.RData")
+```
+# Put together a table that shows us the number of unique participants for which we have PFAS data at6mo, 24mo, 60mo, stratified by whether they are from Glowing or Expecting.
+```{r}
+pfas4.dt %>% filter(Study.GE == "Expecting") %>% group_by(Visit) %>% group_split() %>% sapply(., dim)
+#total 167
+
+
+pfas4.dt %>% filter(Study.GE == "Glowing") %>% group_by(Visit) %>% group_split() %>% sapply(., dim)
+#total 212 
+
+#pfas4.dt %>% filter(Study.GE == "Expecting") %>% distinct(StudyID) %>% nrow() #some of these include an id name with GE ? 
+```
+#Table of the detection rate of each PFAS, stratified by 6mo, 24mo, 60mo, and by study.
+```{r}
+library(readxl)
+thresholds <- read_excel("~/postnatal_pfas/Final Results ACNC 2025.xlsx", sheet = 2) 
+thresholds$PFAS <- gsub(" ", ".", thresholds$PFAS)
+thresholds = data.frame(thresholds)
+```
+
+
+```{r}
+multiple_stats <- function(x) {
+      c(geom_mean = exp(mean(log(x))), geom_sd = exp(sd(log(x))), min_val = min(x), max_val = max(x) )}
+
+print("Expecting 6 months ")
+pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 6) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+print("Expecting 24 months ")
+pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 24) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+print("Expecting 60 months ")
+pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 60) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+print("Glowing 6 months")
+pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 6) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+print("Glowing 24 months")
+pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 24) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+print("Glowing 60 months")
+pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 60) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+```
+
+```{r}
+pfas4.dt$Visit <- factor(pfas4.dt$Visit, levels = c("6mo", "24mo", "60mo"))
+
+pfas_long <- pfas4.dt %>%
+      select(StudyID.GE, Study.GE, Visit, Visitmo, contains("PF")) %>% 
+      pivot_longer(
+        cols = starts_with("PF"), # Select columns to pivot
+        names_to = "Chemical",         # New column for original column names
+        values_to = "Concentration"          # New column for values
+      ) %>% 
+      group_by(Study.GE) %>% 
+      group_split()
+```
+
+
+```{r}
+pfas_long[[1]] %>% 
+ggplot(aes(x = Visit, y = log10(Concentration))) +
+  geom_violin(outlier.shape = NA) +
+  coord_flip() +
+  facet_wrap(~ Chemical, scales = "free_y") +
+ scale_fill_brewer(palette = "Set1") +
+  labs(
+    x = "PFAS",
+    y = expression(Log[10]~Concentration),
+    fill = "Visit Month",
+    title = "Expecting"
+  )  +
+  theme_bw(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 8),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+pfas_long[[2]] %>% 
+ggplot(aes(x = Visit, y = log10(Concentration))) +
+  geom_violin(outlier.shape = NA) +
+  coord_flip() +
+  facet_wrap(~ Chemical, scales = "free_y") +
+ scale_fill_brewer(palette = "Set1") +
+  labs(
+    x = "PFAS",
+    y = expression(Log[10]~Concentration),
+    fill = "Visit Month",
+    title = "Glowing"
+  )  +
+  theme_bw(base_size = 14) +
+  theme(
+    axis.text.y = element_text(size = 8),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+test = pfas_long[[1]] %>% filter(Chemical == "PFHxS.L" & Visitmo == 6 ) %>% select( Concentration)
+BIC =  mclustBIC(test) 
+
+mod1 = Mclust(test , x = BIC)
+summary(mod1, parameters = TRUE)
+
+test$classification = mod1$classification
+plot(mod1, what = "classification")
+```
+
+```{r}
+mo6_clusters = pfas4.dt %>% filter(Visit == "6mo") %>% select(contains("PF")) 
+BIC =  mclustBIC(mo6_clusters) 
+
+mod1 = Mclust(mo6_clusters  , x = BIC)
+summary(mod1, parameters = TRUE)
+
+mo6_clusters$classification = mod1$classification 
+plot(mod1, what = "classification")
+
+```
+```{r}
+mo24_clusters = pfas4.dt %>% filter(Visit == "24mo") %>% select(contains("PF")) 
+BIC =  mclustBIC(mo24_clusters) 
+
+mod1 = Mclust(mo24_clusters  , x = BIC)
+summary(mod1, parameters = TRUE)
+
+mo24_clusters$classification = mod1$classification 
+plot(mod1, what = "classification")
+table(mod1$classification)
+
+plot(BIC)
+```
+```{r}
+mo60_clusters = pfas4.dt %>% filter(Visit == "60mo") %>% select(contains("PF")) 
+BIC =  mclustBIC(mo60_clusters) 
+
+mod1 = Mclust(mo60_clusters  , x = BIC)
+summary(mod1, parameters = TRUE)
+
+mo60_clusters$classification = mod1$classification 
+plot(mod1, what = "classification")
+table(mod1$classification)
+
+plot(BIC)
+```
+```{r}
+test2 = pfas4.dt %>%  select(contains("PF")) 
+BIC =  mclustBIC(test2) 
+
+mod1 = Mclust(test2 , x = BIC)
+summary(mod1, parameters = TRUE)
+
+test2$classification = mod1$classification 
+plot(mod1, what = "classification")
+table(mod1$classification)
+
+plot(BIC)
+```
+```{r}
+expecting = pfas4.dt %>% filter(Study.GE == "Expecting") %>% select(Visit, StudyID, contains("PF")) %>%  group_by(Visit) %>% group_split()  
+
+names(expecting) = c("ex_24mo","ex_60mo", "ex_6mo")
+
+
+glowing = pfas4.dt %>% filter(Study.GE == "Glowing") %>% select(Visit, StudyID, contains("PF")) %>%  group_by(Visit) %>% group_split()  
+names(glowing) = c("glo_24mo","glo_60mo", "glo_6mo")
+```
+
+
+```{r}
+#expecting[[1]]$StudyID
+
+#expecting[[2]]$StudyID includes only GE? 
+
+
+#expecting[[3]]$StudyID #theres a lowercase Ex-311 
+
+sum(expecting$ex_24mo$StudyID %in% expecting$ex_6mo$StudyID) #73 
+
+
+ex_ids = expecting$ex_24mo$StudyID[which((expecting$ex_24mo$StudyID %in% expecting$ex_6mo$StudyID) == TRUE )]
+
+```
+
+
+```{r, eval = FALSE }
+ex_24mo = expecting$ex_24mo %>% filter(StudyID %in% ex_ids)
+
+colnames(ex_24mo)[3:9] = sapply(colnames(ex_24mo)[3:9], function(name) paste0("24mo_", name))
+
+ex_6mo = expecting$ex_6mo %>% filter(StudyID %in% ex_ids)
+
+colnames(ex_6mo)[3:9] = sapply(colnames(ex_6mo)[3:9], function(name) paste0("6mo_", name))
+
+expec_73 = left_join(ex_6mo, ex_24mo, by = "StudyID") 
+rownames(expec_73) = expec_73$StudyID
+expec_73 = expec_73 %>% select(contains("PF"))
+
+
+
+mod1 = Mclust(expec_73 )
+summary(mod1, parameters = TRUE)
+
+expec_73$classification = mod1$classification 
+plot(mod1, what = "classification")
+table(mod1$classification)
+
+plot(BIC)
+
+```
+```{r, eval = FALSE }
+test3 = pfas_long[[1]] %>% filter(StudyID.GE %in% ex_ids) %>% select(Concentration,Visit) 
+class = test3$Visit
+test3 = test3 %>% select(Concentration)
+clPairs(test3, class)
+BIC <- mclustBIC(test3)
+plot(test3)
+```
+
