@@ -104,7 +104,7 @@ belowLOD
 
 ```
 
-#share ids between growth_modeling and pfas4.dt
+#shared ids between growth_modeling and pfas4.dt
 ```{r}
 ids_pfas4.dt <- pfas4.dt %>% 
                 filter(Study.GE == "Glowing") %>% 
@@ -145,6 +145,24 @@ growth_modeling %>% filter(!id %in% drop_gm) %>% distinct(id) %>% nrow()
 growth_modeling <- growth_modeling %>% 
                    filter(!id %in% drop_gm)
 
+```
+
+```{r}
+growth_modeling %>% 
+                select(id, visit_name, length_cm, weight_kg, adjusted_fat_mass_kg, lean_mass_kg, total_body_water_kg,   fmi, ffmi, maternal_bmi, sex, gest_age_wk, mom_ed) %>% 
+                rename(StudyID.GE = id) %>%
+                filter(visit_name == "Post-24mo") #nrow is 185 after filter 
+
+```
+
+
+
+```{r}
+  pfas4.dt %>% 
+   select(StudyID.GE, Sample.Name, contains(pfas_vars), Visitmo) %>% 
+         pivot_longer(cols = starts_with("pf"), 
+                              names_to = "pfas",
+                             values_to = "concentration") 
 ```
 
 ```{r}
