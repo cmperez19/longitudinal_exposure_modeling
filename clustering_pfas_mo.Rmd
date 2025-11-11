@@ -3,6 +3,7 @@
 #focus only on PFHxS.Total, PFOS.Total, PFOA, PFNA 
 library(tidyverse)
 library(mclust)
+library(xlsx)
 load("~/postnatal_pfas/PFAS_Cleaned_4Continuous_5Binary.RData")
 ```
 # Put together a table that shows us the number of unique participants for which we have PFAS data at6mo, 24mo, 60mo, stratified by whether they are from Glowing or Expecting.
@@ -29,18 +30,24 @@ thresholds = data.frame(thresholds)
 multiple_stats <- function(x) {
       c(geom_mean = exp(mean(log(x))), geom_sd = exp(sd(log(x))), min_val = min(x), max_val = max(x) )}
 
-print("Expecting 6 months ")
-pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 6) %>% select(contains("PF")) %>% sapply(., multiple_stats)
-print("Expecting 24 months ")
-pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 24) %>% select(contains("PF")) %>% sapply(., multiple_stats)
-print("Expecting 60 months ")
-pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 60) %>% select(contains("PF")) %>% sapply(., multiple_stats)
-print("Glowing 6 months")
-pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 6) %>% select(contains("PF")) %>% sapply(., multiple_stats)
-print("Glowing 24 months")
-pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 24) %>% select(contains("PF")) %>% sapply(., multiple_stats)
-print("Glowing 60 months")
-pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 60) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+EX_6mo = pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 6) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+EX_24mo = pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 24) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+EX_60mo = pfas4.dt %>% filter(Study.GE == "Expecting") %>% filter(Visitmo == 60) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+EX_stats = rbind(EX_6mo, EX_24mo, EX_60mo)
+
+GLOW_6mo = pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 6) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+GLOW_24mo = pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 24) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+GLOW_60mo = pfas4.dt %>% filter(Study.GE == "Glowing") %>% filter(Visitmo == 60) %>% select(contains("PF")) %>% sapply(., multiple_stats)
+
+GLOW_stats = rbind(GLOW_6mo, GLOW_24mo, GLOW_60mo)
+
+
 ```
 
 ```{r}
@@ -100,30 +107,21 @@ ggplot(aes(x = Visit, y = log10(Concentration))) +
   )
 ```
 
-```{r}
-test = pfas_long[[1]] %>% filter(Chemical == "PFHxS.L" & Visitmo == 6 ) %>% select( Concentration)
-BIC =  mclustBIC(test) 
-
-mod1 = Mclust(test , x = BIC)
-summary(mod1, parameters = TRUE)
-
-test$classification = mod1$classification
-plot(mod1, what = "classification")
-```
+#he number of mixing components and the covariance parameterisation are selected using the Bayesian Information Criterion (BIC). A summary showing the top-three models and a plot of the BIC traces (see Figure 3) for all the models considered is then obtained
 
 ```{r}
-mo6_clusters = pfas4.dt %>% filter(Visit == "6mo") %>% select(contains("PF")) 
+mo6_clusters = pfas4.dt %>% filter(Visit == "6mo") %>% select(PFHxS.Total, PFOS.Total, PFOA, PFNA ) 
 BIC =  mclustBIC(mo6_clusters) 
 
 mod1 = Mclust(mo6_clusters  , x = BIC)
 summary(mod1, parameters = TRUE)
-
+table(mod1$classification)
 mo6_clusters$classification = mod1$classification 
 plot(mod1, what = "classification")
 
 ```
 ```{r}
-mo24_clusters = pfas4.dt %>% filter(Visit == "24mo") %>% select(contains("PF")) 
+mo24_clusters = pfas4.dt %>% filter(Visit == "24mo") %>% select(PFHxS.Total, PFOS.Total, PFOA, PFNA ) 
 BIC =  mclustBIC(mo24_clusters) 
 
 mod1 = Mclust(mo24_clusters  , x = BIC)
@@ -135,8 +133,9 @@ table(mod1$classification)
 
 plot(BIC)
 ```
+
 ```{r}
-mo60_clusters = pfas4.dt %>% filter(Visit == "60mo") %>% select(contains("PF")) 
+mo60_clusters = pfas4.dt %>% filter(Visit == "60mo") %>% select(PFHxS.Total, PFOS.Total, PFOA, PFNA) 
 BIC =  mclustBIC(mo60_clusters) 
 
 mod1 = Mclust(mo60_clusters  , x = BIC)
@@ -148,6 +147,7 @@ table(mod1$classification)
 
 plot(BIC)
 ```
+
 ```{r}
 test2 = pfas4.dt %>%  select(contains("PF")) 
 BIC =  mclustBIC(test2) 
@@ -161,6 +161,7 @@ table(mod1$classification)
 
 plot(BIC)
 ```
+
 ```{r}
 expecting = pfas4.dt %>% filter(Study.GE == "Expecting") %>% select(Visit, StudyID, contains("PF")) %>%  group_by(Visit) %>% group_split()  
 
@@ -213,6 +214,7 @@ table(mod1$classification)
 plot(BIC)
 
 ```
+
 ```{r, eval = FALSE }
 test3 = pfas_long[[1]] %>% filter(StudyID.GE %in% ex_ids) %>% select(Concentration,Visit) 
 class = test3$Visit

@@ -1,0 +1,26 @@
+```{r}
+library(tidyverse)
+setwd("~/GitHub/longitudinal_exposure_modeling")
+load("AnalyticData_11.10.2025.RData")
+load("PFAS_Cleaned_4Continuous_5Binary.RData")
+
+library(readxl)
+thresholds <- read_excel("~/postnatal_pfas/Final Results ACNC 2025.xlsx", sheet = 2) 
+thresholds$PFAS <- gsub(" ", ".", thresholds$PFAS)
+thresholds = data.frame(thresholds)
+
+```
+
+#Table of the detection rate of each PFAS, stratified by 6mo, 24mo, 60mo, and by study.
+```{r}
+# i couldnt think of how to do this in a sophisticated way we are doing a for loop 
+for( pfas in c(PFHxS.Total, PFOS.Total, PFOA, PFNA) )
+pfas4.dt %>% filter(Study.GE == "Expecting") %>% select(StudyID.GE,contains("PF")) 
+
+
+```
+
+```{r}
+pfas4.dt
+```
+
