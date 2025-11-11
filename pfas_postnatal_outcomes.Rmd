@@ -5,22 +5,152 @@ load("AnalyticData_11.10.2025.RData")
 load("PFAS_Cleaned_4Continuous_5Binary.RData")
 
 library(readxl)
-thresholds <- read_excel("~/postnatal_pfas/Final Results ACNC 2025.xlsx", sheet = 2) 
+thresholds <- read_excel("Final Results ACNC 2025.xlsx", sheet = 2) 
 thresholds$PFAS <- gsub(" ", ".", thresholds$PFAS)
 thresholds = data.frame(thresholds)
-
 ```
 
 #Table of the detection rate of each PFAS, stratified by 6mo, 24mo, 60mo, and by study.
 ```{r}
-# i couldnt think of how to do this in a sophisticated way we are doing a for loop 
-for( pfas in c(PFHxS.Total, PFOS.Total, PFOA, PFNA) )
-pfas4.dt %>% filter(Study.GE == "Expecting") %>% select(StudyID.GE,contains("PF")) 
+# PFAS names (must match colnames in pfas4.dt)
+pfas_vars <- pfas4.dt %>% select(contains("PF")) %>% colnames()
 
+# Define timepoints of interest -- adjust as needed to match variable in your data
+timepoints <- c(6, 24, 60)
+
+age_var <- "Visitmo"  # or "visit_month" etc.
+
+# Study variable
+study_var <- "Study.GE"
+
+# Initialize result
+results <- list()
+
+for(study in c("Glowing", "Expecting")) {
+  for(month in timepoints) {
+    dat <- pfas4.dt %>%
+      filter(.data[[study_var]] == study, .data[[age_var]] == month)
+    for(pfas in pfas_vars) {
+      lod <- thresholds %>% filter(PFAS == pfas) %>% pull(LOQ)  
+      if(length(lod) == 1) {
+        n_total <- sum(!is.na(dat[[pfas]]))
+        n_above <- sum(dat[[pfas]] > lod, na.rm=TRUE)
+        prop <- ifelse(n_total > 0, n_above / n_total, NA)
+        results <- append(results, list(data.frame(
+          Study = study,
+          Month = month,
+          PFAS = pfas,
+          LOD = lod, 
+          PropAboveLOD = prop,
+          N = n_total
+        )))
+      }
+    }
+  }
+}
+# Combine result list to dataframe
+results_df <- bind_rows(results)
+knitr::kable(results_df, digits=2)
+
+```
+#6 mo and 24 mo glowing IDS above the LOD for both time points 
+```{r}
+
+# PFAS names should match your dataset and the thresholds file
+pfas_vars <- pfas4.dt %>% select(contains("PF")) %>% colnames()
+
+# Data frame to save results
+results <- data.frame()
+
+#some ids only have one recording ex: G-116 
+# 125 ids have both 6 mo and 24 mo data 
+dat <- pfas4.dt %>% 
+      filter(Study.GE == "Glowing") %>% 
+      filter(Visitmo == 6 | Visitmo == 24) %>%  
+      group_by(StudyID.GE) %>%
+      filter(n() == 2) %>%
+      ungroup()
+ 
+#saving ids below LOD for 6 or 24 month pfas 
+belowLOD = list()
+
+  for (pfas in pfas_vars) {
+    lod <- thresholds$LOQ[which(thresholds$PFAS == pfas)]
+      n_total <- sum(!is.na(dat[[pfas]]))
+      n_above <- sum(dat[[pfas]] > lod, na.rm=TRUE)
+      prop_above <- ifelse(n_total > 0, n_above / n_total, NA)
+      results <- rbind(results, data.frame(
+        PFAS = pfas,
+        PropAboveLOD = prop_above,
+        N = n_total
+      ))
+      
+    if(n_above != n_total){
+       belowLOD[[pfas]] <- dat$Sample.Name[which(dat[[pfas]] < lod)]
+    
+  col_name <- paste0("belowLOD",pfas)
+  new_col <- data.frame(col = ifelse(dat[[pfas]] < lod, 1, 0)) 
+ colnames(new_col) <- col_name
+ dat <- cbind(dat, new_col)
+
+    }
+    }
+  
+
+
+knitr::kable(results,digits = 2)
+
+belowLOD
+
+```
+
+#share ids between growth_modeling and pfas4.dt
+```{r}
+ids_pfas4.dt <- pfas4.dt %>% 
+                filter(Study.GE == "Glowing") %>% 
+                filter(Visitmo == 6 | Visitmo == 24) %>%
+                distinct(StudyID.GE) %>% 
+                pull(StudyID.GE)
+
+length(ids_pfas4.dt)
+
+ids_growth_modeling <- growth_modeling %>% 
+                      distinct(id) %>%
+                      pull(id)
+length(ids_growth_modeling)
+
+#the ids in growth_modeling NOT in pfas.dt 
+drop_gm = ids_growth_modeling[which(!(ids_growth_modeling %in% ids_pfas4.dt) == TRUE)] 
+print(drop_gm)
+
+#the ids in pfas4.dt NOT in growth_modeling
+drop_pfas4dt = ids_pfas4.dt[which(!(ids_pfas4.dt %in% ids_growth_modeling) == TRUE)]
+print(drop_pfas4dt)
+
+pfas4.dt %>%
+      filter(Visitmo == 6 | Visitmo == 24) %>%
+      filter(!StudyID.GE %in% drop_pfas4dt ) %>% 
+      filter(Study.GE == "Glowing") %>% 
+      distinct(StudyID.GE) %>%
+      nrow()
+
+pfas4.dt <- pfas4.dt %>%
+            filter(!StudyID.GE %in% drop_pfas4dt) %>%
+            filter(Study.GE == "Glowing") %>% 
+            filter(Visitmo == 6 | Visitmo == 24) %>% 
+            mutate(across(.cols = pfas_vars, ~ log(.))) #log transforming data 
+
+growth_modeling %>% filter(!id %in% drop_gm) %>% distinct(id) %>% nrow()
+
+growth_modeling <- growth_modeling %>% 
+                   filter(!id %in% drop_gm)
 
 ```
 
 ```{r}
-pfas4.dt
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
+
+
 ```
+
 
