@@ -1,5 +1,7 @@
 ```{r}
 library(tidyverse)
+library(lmerTest)
+library(stats)
 setwd("~/GitHub/longitudinal_exposure_modeling")
 load("AnalyticData_11.10.2025.RData")
 load("PFAS_Cleaned_4Continuous_5Binary.RData")
@@ -134,41 +136,96 @@ pfas4.dt %>%
       distinct(StudyID.GE) %>%
       nrow()
 
-pfas4.dt <- pfas4.dt %>%
-            filter(!StudyID.GE %in% drop_pfas4dt) %>%
-            filter(Study.GE == "Glowing") %>% 
-            filter(Visitmo == 6 | Visitmo == 24) %>% 
-            mutate(across(.cols = pfas_vars, ~ log(.))) #log transforming data 
+#pfas4.dt <- pfas4.dt %>%
+ #           filter(!StudyID.GE %in% drop_pfas4dt) %>%
+  #          filter(Study.GE == "Glowing") %>% 
+   #         filter(Visitmo == 6 | Visitmo == 24) %>% 
+    #        mutate(across(.cols = pfas_vars, ~ log(.))) #log transforming data 
 
-growth_modeling %>% filter(!id %in% drop_gm) %>% distinct(id) %>% nrow()
-
-growth_modeling <- growth_modeling %>% 
-                   filter(!id %in% drop_gm)
-
-```
-
-```{r}
 growth_modeling %>% 
-                select(id, visit_name, length_cm, weight_kg, adjusted_fat_mass_kg, lean_mass_kg, total_body_water_kg,   fmi, ffmi, maternal_bmi, sex, gest_age_wk, mom_ed) %>% 
-                rename(StudyID.GE = id) %>%
-                filter(visit_name == "Post-24mo") #nrow is 185 after filter 
+    filter(!id %in% drop_gm) %>% 
+    distinct(id) %>% 
+    nrow()
+
+#growth_modeling <- growth_modeling %>% 
+                  # filter(!id %in% drop_gm)
 
 ```
-
-
 
 ```{r}
-  pfas4.dt %>% 
-   select(StudyID.GE, Sample.Name, contains(pfas_vars), Visitmo) %>% 
-         pivot_longer(cols = starts_with("pf"), 
-                              names_to = "pfas",
-                             values_to = "concentration") 
+outcome_data <- growth_modeling %>% 
+                filter(visit_name %in% c("Post-24mo", "Post-6mo")  ) %>% 
+                select(id, visit_name, length_cm, weight_kg, adjusted_fat_mass_kg, lean_mass_kg,   total_body_water_kg,   fmi, ffmi, maternal_bmi, sex, gest_age_wk, mom_ed) %>% 
+     mutate(
+     Visitmo = case_when(
+      visit_name == "Post-24mo" ~ 24,
+      visit_name == "Post-6mo" ~ 6,
+      TRUE ~ NA_real_)) %>% 
+    rename(StudyID.GE = id) #nrow is 185 after filter 
+
+
+outcome_data <-  pfas4.dt %>%
+  filter(Study.GE == "Glowing") %>% 
+  filter(Visitmo %in% c(6, 24)) %>%
+  select(StudyID.GE, Visitmo, all_of(pfas_vars)) %>%
+  mutate(across(.cols = pfas_vars, ~ log(.))) %>% 
+ inner_join(outcome_data, by = c("StudyID.GE" = "StudyID.GE", "Visitmo" = "Visitmo"))
+
+outcome_data <- outcome_data %>% 
+                group_by(StudyID.GE) %>%
+                filter(n() == 2) %>% #ensures we focus on data that has duplicates 
+                ungroup() 
+
 ```
+
 
 ```{r}
 outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
 
+lmm_results <- list()
+
+# Loop through each outcome variable
+for (outcome in outcome_var) {
+  # Construct the formula as a string
+  formula_str <- paste(
+    outcome, "~  PFHxS.L + PFHxS.Total + PFOS.L + PFOS.Br + PFOS.Total  + PFOA +  PFNA  + Visitmo + maternal_bmi + sex + gest_age_wk + mom_ed + (1 | StudyID.GE)")
+  
+  # Convert the string to a formula
+  model_formula <- as.formula(formula_str)
+  
+  # Fit the model
+  lmm_fit <- lmer(model_formula, data = outcome_data)
+  
+  # Store the model, named by outcome
+  lmm_results[[outcome]] <- summary(lmm_fit) 
+}
+
+lmm_results
+```
+
+```{r}
+outcome_wide <- growth_modeling %>% 
+                filter(visit_name == "Post-24mo") %>% 
+                select(id, visit_name, length_cm, weight_kg, adjusted_fat_mass_kg, lean_mass_kg,   total_body_water_kg,   fmi, ffmi, maternal_bmi, sex, gest_age_wk, mom_ed)  %>% 
+    rename(StudyID.GE = id)
+
+pfas_wide <- pfas4.dt %>%
+  filter(Study.GE == "Glowing") %>% 
+  filter(Visitmo %in% c(6, 24)) %>%
+  mutate(across(.cols = pfas_vars, ~ log(.))) %>% 
+  select(StudyID.GE, Visitmo, all_of(pfas_vars)) %>%
+  pivot_wider(
+    id_cols = StudyID.GE,
+    names_from = Visitmo,
+    values_from = all_of(pfas_vars),
+    names_sep = "_"
+  ) %>% inner_join(outcome_wide, by = "StudyID.GE")
+
+pfas_wide
 
 ```
 
+```{r}
+
+```
 
