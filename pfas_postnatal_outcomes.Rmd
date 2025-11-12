@@ -273,7 +273,7 @@ pfas_wide
 
 ```
 
-```{r}
+```{r, eval = FALSE}
 outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
 
 ln_results = list()
@@ -291,11 +291,48 @@ for (outcome in outcome_var) {
  coef_mat <- coef(summary(lm_mod))
  print(outcome) 
  print(coef_mat)
- print(car::vif(lm_mod))
+ print(car::vif(lm_mod)) # variance inflation factor was above 5 sometimes 100 
   }
 
 
 
+
+```
+
+```{r}
+library(qgcomp)
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
+
+out <- vector("list", length(outcome_var))
+ 
+qgcomp_results <- list()
+
+for (outcome in outcome_var) {
+  mod1.formula <- as.formula(paste(
+    outcome, "~ PFHxS.L_6 + PFHxS.L_24 + PFHxS.Total_6 + PFHxS.Total_24",
+    "+ PFOS.L_6 + PFOS.L_24 + PFOS.Br_6 + PFOS.Br_24 + PFOS.Total_6 + PFOS.Total_24",
+    "+ PFOA_6 + PFOA_24 + PFNA_6 + PFNA_24 + maternal_bmi + sex + gest_age_wk + mom_ed")) 
+  
+
+ q_gcomp <- qgcomp::qgcomp.noboot(mod1.formula,                                     
+                                     expnms= c("PFHxS.L_6", "PFHxS.L_24", "PFHxS.Total_6",    "PFHxS.Total_24", "PFOS.L_6", "PFOS.L_24", "PFOS.Br_6", "PFOS.Br_24","PFOS.Total_6",  "PFOS.Total_24","PFOA_6", "PFOA_24", "PFNA_6", "PFNA_24"),
+                                     dat = pfas_wide, 
+                                     family=gaussian(), 
+                                     q=4) 
+ 
+  out[[outcome]] = data.frame(
+                       outcome = outcome, 
+                       estimate = q_gcomp[["psi"]], 
+                       psi.ci.ll = q_gcomp$ci.coef[2], 
+                       psi.ci.ul = q_gcomp$ci.coef[4], 
+                       p.value = q_gcomp[["pval"]][2])
+  
+}
+
+qgcomp_results <- bind_rows(out)
+rownames(qgcomp_results) <- NULL
+
+knitr::kable(qgcomp_results, digits = 3)
 
 ```
 
