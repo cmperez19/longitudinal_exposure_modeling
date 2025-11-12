@@ -2,6 +2,7 @@
 library(tidyverse)
 library(lmerTest)
 library(stats)
+library(car)
 setwd("~/GitHub/longitudinal_exposure_modeling")
 load("AnalyticData_11.10.2025.RData")
 load("PFAS_Cleaned_4Continuous_5Binary.RData")
@@ -178,6 +179,11 @@ outcome_data <- outcome_data %>%
 
 ```
 
+```{r}
+cor_matrix <- cor(outcome_data %>% select(PFHxS.L, PFHxS.Total, PFOS.L, PFOS.Br, PFOS.Total, PFOA, PFNA), use="pairwise.complete.obs")
+print(cor_matrix)
+```
+
 
 ```{r}
 outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
@@ -204,6 +210,48 @@ lmm_results
 ```
 
 ```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
+
+indiv_results = list()
+# Loop through each outcome variable
+for (outcome in outcome_var) {
+  out <- vector("list", length(outcome_var))
+  for(pfas in pfas_vars) {
+  # Construct the formula as a string
+  formula_str <- paste(
+    outcome, "~", pfas, "+ Visitmo + maternal_bmi + sex + gest_age_wk + mom_ed + (1 | StudyID.GE)")
+  
+   # Convert the string to a formula
+  model_formula <- as.formula(formula_str)
+
+  lmm_fit <- lmer(model_formula, data = outcome_data)
+  
+ coef_mat <- coef(summary(lmm_fit))
+ 
+ ci <- confint(lmm_fit)[pfas, ]
+  
+  out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+row.names = NULL
+)
+  }
+  indiv_results[[outcome]] <- bind_rows(out)
+}
+for ( i in outcome_var){
+  print(knitr::kable(indiv_results[[i]], digits = 3)) 
+}
+
+
+
+```
+
+
+```{r}
 outcome_wide <- growth_modeling %>% 
                 filter(visit_name == "Post-24mo") %>% 
                 select(id, visit_name, length_cm, weight_kg, adjusted_fat_mass_kg, lean_mass_kg,   total_body_water_kg,   fmi, ffmi, maternal_bmi, sex, gest_age_wk, mom_ed)  %>% 
@@ -226,6 +274,28 @@ pfas_wide
 ```
 
 ```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "total_body_water_kg", "fmi", "ffmi")
+
+ln_results = list()
+for (outcome in outcome_var) {
+
+  formula_str <- paste(
+    outcome, "~ PFHxS.L_6 + PFHxS.L_24 + PFHxS.Total_6 + PFHxS.Total_24",
+    "+ PFOS.L_6 + PFOS.L_24 + PFOS.Br_6 + PFOS.Br_24 + PFOS.Total_6 + PFOS.Total_24",
+    "+ PFOA_6 + PFOA_24 + PFNA_6 + PFNA_24 + maternal_bmi + sex + gest_age_wk + mom_ed")
+
+  model_formula <- as.formula(formula_str)
+
+  lm_mod <- lm(model_formula, data = pfas_wide)
+  
+ coef_mat <- coef(summary(lm_mod))
+ print(outcome) 
+ print(coef_mat)
+ print(car::vif(lm_mod))
+  }
+
+
+
 
 ```
 
