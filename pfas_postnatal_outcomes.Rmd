@@ -1,3 +1,7 @@
+add GA as a covariate 
+self organizing maps for the clustering
+add T1 PFAS data to longitudinal model data 
+
 ```{r}
 library(tidyverse)
 library(lmerTest)
@@ -380,8 +384,150 @@ rownames(qgcomp_results) <- NULL
 
 knitr::kable(qgcomp_results, digits = 3)
 ```
-
+#bkmr length_cm w T1 
 ```{r}
+library(bkmr)
+outcome_name <- "length_cm"
 
+exp_vars <- c(
+  "PFHxS.Total_6","PFHxS.Total_24",
+  "PFOS.Total_6","PFOS.Total_24",
+  "PFOA_6","PFOA_24",
+  "PFNA_6","PFNA_24", "lnPFHxS_T1",  "lnPFOS_T1", "lnPFOA_T1", "lnPFNA_T1"
+)
+
+covariates <- c("maternal_bmi","bf_length_mo","sex","gest_age_wk","mom_ed") 
+
+dat_bkmr <- pfas_wide %>%
+  select(all_of(c("StudyID.GE", outcome_name, exp_vars, covariates))) %>%
+  # ensure coding of covariates is meaningful for modeling
+  mutate(
+    sex = if_else(sex == "Male", 1, 0),            
+    mom_ed = if_else(mom_ed == "College Degree", 1, 0)                           # example: treat education as factor
+  ) %>% drop_na(all_of(c(outcome_name, exp_vars, covariates)))
+
+nrow(dat_bkmr)
+
+y <- dat_bkmr[[outcome_name]]
+
+# Z = exposures (recommended to center and scale)
+Z <- scale(as.matrix(dat_bkmr %>% select(all_of(exp_vars))))
+colnames(Z) <- exp_vars
+
+# X = design matrix for covariates (include intercept will be added internally by bkmr)
+# Use model.matrix to expand factors into dummy variables
+X <- model.matrix(~ maternal_bmi + bf_length_mo + sex + gest_age_wk + mom_ed, data = dat_bkmr)
+# remove the intercept column if present (kmbayes handles it internally)
+if(colnames(X)[1] == "(Intercept)") X <- X[, -1, drop = FALSE]
+
+# 4) Fit BKMR (a quick test run with small iterations; increase iter & burnin for final analysis)
+set.seed(123)
+fit_bkmr <- kmbayes(
+  y = y,
+  Z = Z,
+  X = X,
+  iter = 5000,     # total MCMC iterations (increase e.g., 20000+ for final)
+  varsel = TRUE,   # turn on variable selection (if you want PIPs)
+  verbose = TRUE
+)
+
+
+
+pred.resp.univar <- PredictorResponseUnivar(fit = fit_bkmr)
+ggplot(pred.resp.univar, aes(z, est, ymin = est - 1.96*se, ymax = est + 1.96*se)) + 
+    geom_smooth(stat = "identity") + 
+    facet_wrap(~ variable) +
+  ylab("h(z)")
+
+risks.overall <- OverallRiskSummaries(fit = fit_bkmr, y = y, Z = Z, X = X, 
+                                      qs = seq(0.25, 0.75, by = 0.05), 
+                                      q.fixed = 0.5, method = "exact")
+
+ggplot(risks.overall, aes(quantile, est, ymin = est - 1.96*sd, ymax = est + 1.96*sd)) + 
+    geom_pointrange()
+
+
+risks.singvar <- SingVarRiskSummaries(fit = fit_bkmr, y = y, Z = Z, X = X, 
+                                      qs.diff = c(0.25, 0.75), 
+                                      q.fixed = c(0.25, 0.50, 0.75),
+                                      method = "exact")
+
+ggplot(risks.singvar, aes(variable, est, ymin = est - 1.96*sd, 
+                          ymax = est + 1.96*sd, col = q.fixed)) + 
+    geom_pointrange(position = position_dodge(width = 0.75)) + 
+  coord_flip()
 ```
+#bkmr no t1 lean_mass_kg 
+```{r}
+outcome_name <- "lean_mass_kg"
+
+exp_vars <- c(
+  "PFHxS.Total_6","PFHxS.Total_24",
+  "PFOS.Total_6","PFOS.Total_24",
+  "PFOA_6","PFOA_24",
+  "PFNA_6","PFNA_24"
+)
+
+covariates <- c("maternal_bmi","bf_length_mo","sex","gest_age_wk","mom_ed") 
+
+dat_bkmr <- pfas_wide %>%
+  select(all_of(c("StudyID.GE", outcome_name, exp_vars, covariates))) %>%
+  # ensure coding of covariates is meaningful for modeling
+  mutate(
+    sex = if_else(sex == "Male", 1, 0),            
+    mom_ed = if_else(mom_ed == "College Degree", 1, 0)                           # example: treat education as factor
+  ) %>% drop_na(all_of(c(outcome_name, exp_vars, covariates)))
+
+nrow(dat_bkmr)
+
+y <- dat_bkmr[[outcome_name]]
+
+# Z = exposures (recommended to center and scale)
+Z <- scale(as.matrix(dat_bkmr %>% select(all_of(exp_vars))))
+colnames(Z) <- exp_vars
+
+# X = design matrix for covariates (include intercept will be added internally by bkmr)
+# Use model.matrix to expand factors into dummy variables
+X <- model.matrix(~ maternal_bmi + bf_length_mo + sex + gest_age_wk + mom_ed, data = dat_bkmr)
+# remove the intercept column if present (kmbayes handles it internally)
+if(colnames(X)[1] == "(Intercept)") X <- X[, -1, drop = FALSE]
+
+# 4) Fit BKMR (a quick test run with small iterations; increase iter & burnin for final analysis)
+set.seed(123)
+fit_bkmr <- kmbayes(
+  y = y,
+  Z = Z,
+  X = X,
+  iter = 5000,     # total MCMC iterations (increase e.g., 20000+ for final)
+  varsel = TRUE,   # turn on variable selection (if you want PIPs)
+  verbose = TRUE
+)
+
+
+
+pred.resp.univar <- PredictorResponseUnivar(fit = fit_bkmr)
+ggplot(pred.resp.univar, aes(z, est, ymin = est - 1.96*se, ymax = est + 1.96*se)) + 
+    geom_smooth(stat = "identity") + 
+    facet_wrap(~ variable) +
+  ylab("h(z)")
+
+risks.overall <- OverallRiskSummaries(fit = fit_bkmr, y = y, Z = Z, X = X, 
+                                      qs = seq(0.25, 0.75, by = 0.05), 
+                                      q.fixed = 0.5, method = "exact")
+
+ggplot(risks.overall, aes(quantile, est, ymin = est - 1.96*sd, ymax = est + 1.96*sd)) + 
+    geom_pointrange()
+
+
+risks.singvar <- SingVarRiskSummaries(fit = fit_bkmr, y = y, Z = Z, X = X, 
+                                      qs.diff = c(0.25, 0.75), 
+                                      q.fixed = c(0.25, 0.50, 0.75),
+                                      method = "exact")
+
+ggplot(risks.singvar, aes(variable, est, ymin = est - 1.96*sd, 
+                          ymax = est + 1.96*sd, col = q.fixed)) + 
+    geom_pointrange(position = position_dodge(width = 0.75)) + 
+  coord_flip()
+```
+
 
