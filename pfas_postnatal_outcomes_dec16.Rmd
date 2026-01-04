@@ -1,0 +1,553 @@
+```{r}
+library(tidyverse)
+library(lmerTest)
+load("AnalyticData_11.10.2025.RData")
+load("PFAS_Cleaned_4Continuous_5Binary.RData")
+```
+
+```{r}
+pfas_vars <- c("PFHxS.Total", "PFOS.Total", "PFOA", "PFNA" )
+
+outcome_data <- growth_modeling %>% 
+                filter(visit_name %in% c("Post-24mo", "Post-6mo")  ) %>% 
+                select(id, visit_name, length_cm, weight_kg, adjusted_fat_mass_kg, lean_mass_kg, fmi, ffmi, wfl_z, maternal_bmi, sex, gest_age_wk, mom_ed, bf_length_mo, lnPFHxS_T1, lnPFOS_T1, lnPFOA_T1, lnPFNA_T1) %>% 
+     mutate(
+     Visitmo = case_when(
+      visit_name == "Post-24mo" ~ 24,
+      visit_name == "Post-6mo" ~ 6,
+      TRUE ~ NA_real_)) %>% 
+    rename(StudyID.GE = id) #nrow is 185 after filter 
+
+
+outcome_data <-  pfas4.dt %>%
+  filter(Study.GE == "Glowing") %>% 
+  filter(Visitmo %in% c(6, 24)) %>%
+  select(StudyID.GE, Visitmo, all_of(pfas_vars)) %>%
+  mutate(across(.cols = pfas_vars, ~ log(.))) %>% 
+ inner_join(outcome_data, by = c("StudyID.GE" = "StudyID.GE", "Visitmo" = "Visitmo"))
+
+outcome_data <- outcome_data %>% 
+                group_by(StudyID.GE) %>%
+                filter(n() == 2) %>% #ensures we focus on data that has duplicates 
+                ungroup() %>% 
+                rename(id = StudyID.GE)
+```
+
+#linear mixed model with bf 
+```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+pfas_vars <- c("PFHxS.Total", "PFOS.Total", "PFOA", "PFNA" )
+
+
+indiv_results = list()
+# Loop through each outcome variable
+for (outcome in outcome_var) {
+  out <- vector("list", length(outcome_var))
+  for(pfas in pfas_vars) {
+  # Construct the formula as a string
+  formula_str <- paste(
+    outcome, "~", pfas, " + maternal_bmi + sex + bf_length_mo +  mom_ed +  Visitmo + (1 | id)")
+  
+   # Convert the string to a formula
+  model_formula <- as.formula(formula_str)
+
+  lmm_fit <- lmer(model_formula, data = outcome_data)
+  
+ coef_mat <- coef(summary(lmm_fit))
+ 
+ ci <- confint(lmm_fit)[pfas, ]
+  
+  out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+row.names = NULL
+)
+  }
+  indiv_results[[outcome]] <- bind_rows(out)
+}
+
+
+
+```
+#linear mixed model no bf in the model 
+```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+indiv_results = list()
+# Loop through each outcome variable
+for (outcome in outcome_var) {
+  out <- vector("list", length(outcome_var))
+  for(pfas in pfas_vars) {
+  # Construct the formula as a string
+  formula_str <- paste(
+    outcome, "~", pfas, "+ Visitmo + maternal_bmi + sex +   mom_ed + (1  | id)")
+  
+   # Convert the string to a formula
+  model_formula <- as.formula(formula_str)
+
+  lmm_fit <- lmer(model_formula, data = outcome_data)
+  
+ coef_mat <- coef(summary(lmm_fit))
+ 
+ ci <- confint(lmm_fit)[pfas, ]
+  
+  out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+row.names = NULL
+)
+  }
+  indiv_results[[outcome]] <- bind_rows(out)
+}
+
+
+
+```
+
+```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+pfas1_vars = c("lnPFHxS_T1", "lnPFOS_T1", "lnPFOA_T1", "lnPFNA_T1") 
+
+indiv_results = list()
+
+# Loop through each outcome variable
+for (outcome in outcome_var) {
+  out <- list()
+  for(i in 1:4) {
+   pfas = pfas_vars[i] 
+   pfas1 = pfas1_vars[i]
+  # Construct the formula as a string
+  formula_str <- paste(
+    outcome, "~", pfas, "+ Visitmo +", pfas1 ,"+ maternal_bmi + sex +  bf_length_mo +  mom_ed + (1  | id)")
+  
+   # Convert the string to a formula
+  model_formula <- as.formula(formula_str)
+
+  lmm_fit <- lmer(model_formula, data = outcome_data)
+  
+ coef_mat <- coef(summary(lmm_fit))
+ 
+ ci <- confint(lmm_fit)[pfas, ]
+ 
+ vif  = car::vif(lmm_fit)
+  
+out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+vif_pfas = vif[pfas], 
+vif_pfas_t1 = vif[pfas1], 
+row.names = NULL
+)
+  
+  }
+  indiv_results[[outcome]] <- bind_rows(out)
+}
+
+
+```
+
+```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+outcome_24mo = outcome_data %>% filter(Visitmo == 24)
+
+ln_results = list()
+for (outcome in outcome_var) {
+  out <- vector("list", length(outcome_var))
+for ( pfas in pfas_vars){
+  formula_str <- paste(
+    outcome, "~", pfas,  "+ maternal_bmi + bf_length_mo + sex +  mom_ed")
+
+  model_formula <- as.formula(formula_str)
+
+  lm_mod <- lm(model_formula, data = outcome_24mo)
+  
+coef_mat <- coef(summary(lm_mod))
+ 
+ ci <- confint(lm_mod)[pfas, ]
+  
+  out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+row.names = NULL)
+
+ }
+   ln_results[[outcome]] <- bind_rows(out)
+
+}
+ln_results
+```
+ 
+```{r}
+outcome_6mo = outcome_data %>% filter (Visitmo == 6) %>% select(id, PFHxS.Total, PFOS.Total, PFOA, PFNA) %>% 
+  rename(PFHxS_6mo = PFHxS.Total, 
+         PFOS_6mo = PFOS.Total, 
+         PFOA_6mo = PFOA, 
+         PFNA_6mo = PFNA)
+
+
+outcome_6mo = outcome_data %>% filter(Visitmo == 24) %>% left_join(outcome_6mo, by = "id" )
+
+```
+ 
+ 
+ 
+```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+
+
+ln_results = list()
+for (outcome in outcome_var) {
+  out <- list()
+for ( pfas in c("PFHxS_6mo", "PFOS_6mo", "PFOA_6mo", "PFNA_6mo")){
+  formula_str <- paste(
+    outcome, "~", pfas,  "+ maternal_bmi + bf_length_mo + sex +  mom_ed")
+
+  model_formula <- as.formula(formula_str)
+
+  lm_mod <- lm(model_formula, data = outcome_6mo)
+  
+coef_mat <- coef(summary(lm_mod))
+ 
+ ci <- confint(lm_mod)[pfas, ]
+  
+out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+row.names = NULL)
+
+ }
+   ln_results[[outcome]] <- bind_rows(out)
+
+}
+ln_results
+```
+
+
+
+
+```{r}
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+
+
+ln_results = list()
+for (outcome in outcome_var) {
+  out <- vector("list", length(outcome_var))
+for ( pfas in c("lnPFHxS_T1", "lnPFOS_T1",  "lnPFOA_T1", "lnPFNA_T1" )){
+  formula_str <- paste(
+    outcome, "~", pfas,  "+ maternal_bmi + bf_length_mo + sex +  mom_ed")
+
+  model_formula <- as.formula(formula_str)
+
+  lm_mod <- lm(model_formula, data = outcome_6mo)
+  
+coef_mat <- coef(summary(lm_mod))
+ 
+ ci <- confint(lm_mod)[pfas, ]
+  
+out[[pfas]] <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas, 
+estimate  = coef_mat[pfas, "Estimate"],
+conf.low  = ci[1],
+conf.high = ci[2],
+p.value   = coef_mat[pfas, "Pr(>|t|)"],
+row.names = NULL)
+
+ }
+   ln_results[[outcome]] <- bind_rows(out)
+
+}
+ln_results
+```
+
+
+
+#qgcomp with the 24 month pfas levels is there a combined mixture effect, better than individual, adjust for breast feeding  
+```{r}
+
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+out <- vector("list", length(outcome_var))
+ 
+qgcomp_results <- list()
+
+for (outcome in outcome_var) {
+  mod1.formula <- as.formula(paste(
+    outcome, "~  PFHxS_6mo + PFOS_6mo + PFOA_6mo + PFNA_6mo +  lnPFHxS_T1 + lnPFOS_T1 + lnPFOA_T1 + lnPFNA_T1 +  maternal_bmi + bf_length_mo + sex  + mom_ed")) 
+  
+
+ q_gcomp <- qgcomp::qgcomp.noboot(mod1.formula,                                     
+                                     expnms= c("PFHxS_6mo", "PFOS_6mo", "PFOA_6mo", "PFNA_6mo"),
+                                     dat = outcome_6mo, 
+                                     family=gaussian(), 
+                                     q=4) 
+ 
+  out[[outcome]] = data.frame(
+                       outcome = outcome, 
+                       estimate = q_gcomp[["psi"]], 
+                       psi.ci.ll = q_gcomp$ci.coef[2], 
+                       psi.ci.ul = q_gcomp$ci.coef[4], 
+                       p.value = q_gcomp[["pval"]][2])
+  
+}
+
+qgcomp_results <- bind_rows(out)
+rownames(qgcomp_results) <- NULL
+
+knitr::kable(qgcomp_results, digits = 3)
+```
+
+```{r}
+
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+out <- vector("list", length(outcome_var))
+ 
+qgcomp_results <- list()
+
+for (outcome in outcome_var) {
+  mod1.formula <- as.formula(paste(
+    outcome, "~  PFHxS_6mo + PFOS_6mo + PFOA_6mo + PFNA_6mo + maternal_bmi + bf_length_mo +  lnPFHxS_T1 + lnPFOS_T1 + lnPFOA_T1 + lnPFNA_T1 + sex  + mom_ed")) 
+  
+
+ q_gcomp <- qgcomp::qgcomp.noboot(mod1.formula,                                     
+                                     expnms= c("PFHxS_6mo", "PFOS_6mo", "PFOA_6mo", "PFNA_6mo"),
+                                     dat = outcome_6mo, 
+                                     family=gaussian(), 
+                                     q=4) 
+ 
+  out[[outcome]] = data.frame(
+                       outcome = outcome, 
+                       estimate = q_gcomp[["psi"]], 
+                       psi.ci.ll = q_gcomp$ci.coef[2], 
+                       psi.ci.ul = q_gcomp$ci.coef[4], 
+                       p.value = q_gcomp[["pval"]][2])
+  
+}
+
+qgcomp_results <- bind_rows(out)
+rownames(qgcomp_results) <- NULL
+
+knitr::kable(qgcomp_results, digits = 3)
+```
+
+```{r}
+outcome_24mo = outcome_data %>% filter(Visitmo == 24)
+
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+out <- vector("list", length(outcome_var))
+ 
+qgcomp_results <- list()
+
+for (outcome in outcome_var) {
+  mod1.formula <- as.formula(paste(
+    outcome, "~  PFHxS.Total + PFOS.Total + PFOA + PFNA  + maternal_bmi + bf_length_mo + sex  + mom_ed")) 
+  
+ q_gcomp <- qgcomp::qgcomp.noboot(mod1.formula,                                     
+                                     expnms= c("PFHxS.Total", "PFOS.Total", "PFOA", "PFNA"),
+                                     dat = outcome_24mo, 
+                                     family=gaussian(), 
+                                     q=4) 
+ 
+  out[[outcome]] = data.frame(
+                       outcome = outcome, 
+                       estimate = q_gcomp[["psi"]], 
+                       psi.ci.ll = q_gcomp$ci.coef[2], 
+                       psi.ci.ul = q_gcomp$ci.coef[4], 
+                       p.value = q_gcomp[["pval"]][2])
+  
+}
+
+qgcomp_results <- bind_rows(out)
+rownames(qgcomp_results) <- NULL
+
+knitr::kable(qgcomp_results, digits = 3)
+```
+
+
+```{r}
+
+outcome_var <- c("length_cm","weight_kg", "adjusted_fat_mass_kg", "lean_mass_kg", "fmi", "ffmi", "wfl_z")
+
+pfas_vars_t1 = c("lnPFHxS_T1", "lnPFOS_T1", "lnPFOA_T1", "lnPFNA_T1") 
+pfas_vars_24mo = c("PFHxS.Total", "PFOS.Total", "PFOA", "PFNA")
+pfas_vars_6mo = c("PFHxS_6mo", "PFOS_6mo", "PFOA_6mo", "PFNA_6mo")
+ln_results = list()
+
+# Loop through each outcome variable
+for (outcome in outcome_var) {
+  out <- list()
+  for(i in 1:4) {
+   pfas6mo = pfas_vars_6mo[i] 
+   pfas24mo = pfas_vars_24mo[i]
+   pfast1 = pfas_vars_t1[i]
+  # Construct the formula as a string
+  formula_str <- paste(
+    outcome, "~", pfas24mo, "+", pfas6mo ,"+ maternal_bmi +",  pfast1,"+ sex +  bf_length_mo +  mom_ed ")
+  
+model_formula <- as.formula(formula_str)
+lm_mod <- lm(model_formula, data = outcome_6mo)
+coef_mat <- coef(summary(lm_mod))
+
+vif  = car::vif(lm_mod)
+
+
+  
+pfast1_df <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfast1, 
+estimate  = coef_mat[pfast1, "Estimate"],
+conf.low  = confint(lm_mod)[pfast1, 1],
+conf.high = confint(lm_mod)[pfast1, 1],
+p.value   = coef_mat[pfast1, "Pr(>|t|)"],
+vif = vif[pfast1],
+row.names = NULL)
+
+pfas6mo_df <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas6mo, 
+estimate  = coef_mat[pfas6mo, "Estimate"],
+conf.low  = confint(lm_mod)[pfas6mo, 1],
+conf.high = confint(lm_mod)[pfas6mo, 1],
+p.value   = coef_mat[pfas6mo, "Pr(>|t|)"],
+vif = vif[pfas6mo],
+row.names = NULL)
+
+
+pfas24mo_df <- data.frame(
+postnatal_outcome = outcome,
+pfas = pfas24mo, 
+estimate  = coef_mat[pfas24mo, "Estimate"],
+conf.low  = confint(lm_mod)[pfas24mo, 1],
+conf.high = confint(lm_mod)[pfas24mo, 1],
+p.value   = coef_mat[pfas6mo, "Pr(>|t|)"],
+vif = vif[pfas24mo],
+row.names = NULL)
+
+out[[pfas24mo]] =  bind_rows(pfast1_df,pfas6mo_df,pfas24mo_df )
+  
+ }
+  ln_results[[outcome]] <- bind_rows(out)
+
+  
+  }
+ 
+
+
+
+```
+
+
+```{r}
+library(readxl)
+thresholds <- read_excel("Final Results ACNC 2025.xlsx", sheet = 2) 
+ACNC <- read_excel("Final Results ACNC 2025.xlsx", sheet = 1) 
+```
+
+
+```{r}
+#replacing space from header names with a _
+names(ACNC) <- gsub(" ", "_", names(ACNC))
+thresholds$PFAS <- gsub(" ", "_", thresholds$PFAS)
+thresholds = data.frame(thresholds)
+rownames(thresholds) = thresholds$PFAS
+
+IDs = outcome_6mo$id
+
+#extracting sample names with G- and 24 mo in name
+ACNC_24mo = ACNC %>% filter(str_detect(Sample_Name, "G-") & str_detect(Sample_Name, " 24mo") ) 
+
+
+ACNC_24mo$Sample_Name = str_extract(ACNC_24mo$Sample_Name, "^[^ ]+")
+
+ACNC_24mo = ACNC_24mo %>% filter(Sample_Name %in% IDs)
+dim(ACNC_24mo)
+#dropping 24 mo from name to filter for 6 mo 
+
+ACNC_6mo = ACNC %>% filter(Sample_Name %in% IDs)
+dim(ACNC_6mo)
+```
+
+```{r}
+
+
+# Initialize result
+results <- list()
+
+dat = ACNC_24mo %>% select(c("PFHxS_Total", "PFOS_Total",  "PFOA", "PFNA", "PFHxA", "PFBS" ))
+                                     
+    for(pfas in c("PFHxS_Total", "PFOS_Total",  "PFOA", "PFNA", "PFHxA", "PFBS" )) {
+       lod <- thresholds %>% filter(PFAS == pfas) %>% pull(LOQ)  
+      if(length(lod) == 1) {
+        n_total <- sum(!is.na(dat[[pfas]]))
+        n_above <- sum(dat[[pfas]] > lod, na.rm=TRUE)
+        prop <- ifelse(n_total > 0, n_above / n_total, NA)
+
+        results <- append(results, list(data.frame(
+          month = 24, 
+          PFAS = pfas, 
+          PropAboveLOD = prop,
+          N = n_total
+        )))
+      }
+    
+    }
+
+# Combine result list to dataframe
+results_df <- bind_rows(results)
+knitr::kable(results_df, digits=2)
+```
+```{r}
+
+# Initialize result
+results <- list()
+
+dat = ACNC_6mo %>% select(c("PFHxS_Total", "PFOS_Total",  "PFOA", "PFNA", "PFHxA", "PFBS" ))
+                                     
+    for(pfas in c("PFHxS_Total", "PFOS_Total",  "PFOA", "PFNA", "PFHxA", "PFBS" )) {
+       lod <- thresholds %>% filter(PFAS == pfas) %>% pull(LOQ)  
+      if(length(lod) == 1) {
+        n_total <- sum(!is.na(dat[[pfas]]))
+        n_above <- sum(dat[[pfas]] > lod, na.rm=TRUE)
+        prop <- ifelse(n_total > 0, n_above / n_total, NA)
+
+        results <- append(results, list(data.frame(
+          month = 24, 
+          PFAS = pfas, 
+          PropAboveLOD = prop,
+          N = n_total
+        )))
+      }
+    
+    }
+
+# Combine result list to dataframe
+results_df <- bind_rows(results)
+knitr::kable(results_df, digits=2)
+```
+

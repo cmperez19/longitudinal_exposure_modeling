@@ -38,69 +38,54 @@ ggplot(data = outcome_data, aes(x = Visitmo, y = PFOS.Total, group = StudyID.GE,
 ```
 
 ```{r}
-outcome_data %>% filter(Visitmo == 6) %>% 
-   select(PFNA) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
+pca6 = outcome_data %>% filter(Visitmo == 6) %>% 
+    select(PFHxS.Total, PFOS.Total, PFOA, PFNA) %>%
+    scale() %>% 
+   prcomp(., center = TRUE, scale. = TRUE) 
+
+summary(pca6)
+explained_var = pca6$sdev^2 / sum(pca6$sdev^2)
+df = data.frame(explained_var = explained_var, x = seq_along(explained_var))
 
 
-outcome_data %>% filter(Visitmo == 6) %>% 
-   select(PFOS.Total) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
+ggplot(df, aes(y = explained_var, x = x)) +
+  geom_bar(stat = "identity") + 
+  ylab("Variance Explained") + xlab("Principal Component") +
+  ggtitle("PCA: Variance Explained by Each PC") +
+  theme_minimal()
 
-
-outcome_data %>% filter(Visitmo == 6) %>% 
-   select(PFHxS.Total) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
-
-outcome_data %>% filter(Visitmo == 6) %>% 
-   select(PFOA) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
-
-##############
-outcome_data %>% filter(Visitmo == 24) %>% 
-   select(PFNA) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
-
-
-outcome_data %>% filter(Visitmo == 24) %>% 
-   select(PFOS.Total) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
-
-
-outcome_data %>% filter(Visitmo == 24) %>% 
-   select(PFHxS.Total) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
-
-outcome_data %>% filter(Visitmo == 24) %>% 
-   select(PFOA) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
-
+# Biplot of the first two principal components
+biplot(pca6, main = "PCA Biplot")
 
 
 ```
 
 ```{r}
-outcome_data %>% 
-  filter(Visitmo == 6) %>% 
-   select(PFHxS.Total, PFOS.Total, PFOA, PFNA) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
+pca24 = outcome_data %>% filter(Visitmo == 24) %>% 
+    select(PFHxS.Total, PFOS.Total, PFOA, PFNA) %>%
+    scale() %>% 
+   prcomp(., center = TRUE, scale. = TRUE) 
+
+summary(pca24)
+
+df = data.frame(explained_var = pca24$sdev^2 / sum(pca6$sdev^2), x = seq_along(explained_var))
 
 
-outcome_data %>% 
-  filter(Visitmo == 24) %>% 
-   select(PFHxS.Total, PFOS.Total, PFOA, PFNA) %>% 
-   prcomp(., center = TRUE, scale. = TRUE) %>% 
-   summary(.)
+ggplot(df, aes(y = explained_var, x = x)) +
+  geom_bar(stat = "identity") + 
+  ylab("Variance Explained") + xlab("Principal Component") +
+  ggtitle("PCA: Variance Explained by Each PC") +
+  theme_minimal()
+
+# Biplot of the first two principal components
+biplot(pca24, main = "PCA Biplot")
+
 ```
+
+
+
+
+
 
 
 ```{r}
@@ -108,7 +93,7 @@ outcome_data = outcome_data %>% mutate(year = ifelse(Visitmo == 6, 0.5, 2))
 outcome_data$id <- rep(1:198, each = 2)
 ```
 
-
+# Model-Based Longitudinal Clustering: Latent Class Growth Analysis (LCGA)
 ```{r}
 x =  multlcmm(
   fixed = PFHxS.Total + PFOS.Total + PFOA ~ year,
@@ -117,6 +102,10 @@ x =  multlcmm(
   data = outcome_data,
   ng = 1
 )
+
+x 
+
+x$best
 ```
 
 
@@ -173,5 +162,58 @@ BIC = mclustBIC(data)
 mod1 = Mclust(data  , x = BIC)
 #summary(mod1, parameters = TRUE)
 table(mod1$classification)
+```
+
+```{r}
+
+library(kohonen)
+
+# Prepare data for Visitmo == 6
+som_data <- outcome_data %>%
+  filter(Visitmo == 6) %>%
+  select(PFHxS.Total, PFOS.Total, PFOA, PFNA) %>%
+  scale() # SOM works best with scaled data
+
+# Set SOM grid dimensions (you can adjust xdim and ydim)
+som_grid <- somgrid(xdim = 5, ydim = 5, topo = "hexagonal")
+
+# Train the SOM
+som_model <- som(som_data, grid = som_grid, rlen = 100)
+
+# Plot the training progress and codebook vectors
+plot(som_model, main = "SOM Training Progress & Codebook Vectors")
+
+# Plot component maps for each PFAS variable
+par(mfrow = c(2,2))
+for(i in 1:4) {
+  plot(som_model, type = "property", property = som_model$codes[[1]][,i], 
+       main = colnames(som_data)[i], palette.name = terrain.colors)
+}
+par(mfrow = c(1,1))
+```
+
+
+```{r}
+som_data <- outcome_data %>%
+  filter(Visitmo == 24) %>%
+  select(PFHxS.Total, PFOS.Total, PFOA, PFNA) %>%
+  scale() # SOM works best with scaled data
+
+# Set SOM grid dimensions (you can adjust xdim and ydim)
+som_grid <- somgrid(xdim = 5, ydim = 5, topo = "hexagonal")
+
+# Train the SOM
+som_model <- som(som_data, grid = som_grid, rlen = 100)
+
+# Plot the training progress and codebook vectors
+plot(som_model, main = "SOM Training Progress & Codebook Vectors")
+
+# Plot component maps for each PFAS variable
+par(mfrow = c(2,2))
+for(i in 1:4) {
+  plot(som_model, type = "property", property = som_model$codes[[1]][,i], 
+       main = colnames(som_data)[i], palette.name = terrain.colors)
+}
+par(mfrow = c(1,1))
 ```
 
